@@ -9,30 +9,34 @@
 /** 图片的粗略 token 计费量：按 OpenAI 高清档 1024×1024 的 765 tokens 近似 */
 export const IMAGE_TOKEN_ESTIMATE = 765;
 
-/** 内置参考价（美元 / 百万 token）。取自各厂商公开定价，仅供估算，可在服务设置中覆盖。 */
+/**
+ * 内置参考价（人民币 / 百万 token）。
+ * 国内厂商取官方人民币刊例价；其余按 1 美元 ≈ 7.2 元折算。
+ * 仅供估算，可能已过时，可在 API 服务设置里用自己填的单价覆盖。
+ */
 export const BUILTIN_PRICES = [
-  { match: /gpt-4o-mini/i, input: 0.15, output: 0.6 },
-  { match: /gpt-4o/i, input: 2.5, output: 10 },
-  { match: /gpt-4\.1-mini/i, input: 0.4, output: 1.6 },
-  { match: /gpt-4\.1/i, input: 2, output: 8 },
-  { match: /gpt-4-turbo/i, input: 10, output: 30 },
-  { match: /o[34]-mini/i, input: 1.1, output: 4.4 },
-  { match: /claude-3-5-haiku|claude-haiku/i, input: 0.8, output: 4 },
-  { match: /claude-3-haiku/i, input: 0.25, output: 1.25 },
-  { match: /claude-3-5-sonnet|claude-3-7-sonnet|claude-sonnet/i, input: 3, output: 15 },
-  { match: /claude-3-opus/i, input: 15, output: 75 },
-  { match: /claude-opus/i, input: 15, output: 75 },
-  { match: /deepseek-reasoner|deepseek-r1/i, input: 0.55, output: 2.19 },
-  { match: /deepseek/i, input: 0.27, output: 1.1 },
-  { match: /gemini-2\.5-flash/i, input: 0.3, output: 2.5 },
-  { match: /gemini-2\.0-flash/i, input: 0.1, output: 0.4 },
-  { match: /gemini-1\.5-flash/i, input: 0.075, output: 0.3 },
-  { match: /gemini-2\.5-pro/i, input: 1.25, output: 10 },
-  { match: /gemini-1\.5-pro/i, input: 1.25, output: 5 },
-  { match: /qwen-max/i, input: 1.6, output: 6.4 },
-  { match: /qwen/i, input: 0.4, output: 1.2 },
-  { match: /moonshot|kimi/i, input: 0.6, output: 2.5 },
-  { match: /glm-4/i, input: 0.6, output: 0.6 },
+  { match: /gpt-4o-mini/i, input: 1.1, output: 4.3 },
+  { match: /gpt-4o/i, input: 18, output: 72 },
+  { match: /gpt-4\.1-mini/i, input: 2.9, output: 11.5 },
+  { match: /gpt-4\.1/i, input: 14, output: 58 },
+  { match: /gpt-4-turbo/i, input: 72, output: 216 },
+  { match: /o[34]-mini/i, input: 8, output: 32 },
+  { match: /claude-3-5-haiku|claude-haiku/i, input: 5.8, output: 29 },
+  { match: /claude-3-haiku/i, input: 1.8, output: 9 },
+  { match: /claude-3-5-sonnet|claude-3-7-sonnet|claude-sonnet/i, input: 22, output: 108 },
+  { match: /claude-3-opus/i, input: 108, output: 540 },
+  { match: /claude-opus/i, input: 108, output: 540 },
+  { match: /deepseek-reasoner|deepseek-r1/i, input: 4, output: 16 },
+  { match: /deepseek/i, input: 2, output: 8 },
+  { match: /gemini-2\.5-flash/i, input: 2.2, output: 18 },
+  { match: /gemini-2\.0-flash/i, input: 0.7, output: 2.9 },
+  { match: /gemini-1\.5-flash/i, input: 0.5, output: 2.2 },
+  { match: /gemini-2\.5-pro/i, input: 9, output: 72 },
+  { match: /gemini-1\.5-pro/i, input: 9, output: 36 },
+  { match: /qwen-max/i, input: 12, output: 48 },
+  { match: /qwen/i, input: 2.9, output: 8.6 },
+  { match: /moonshot|kimi/i, input: 4.3, output: 18 },
+  { match: /glm-4/i, input: 4.3, output: 4.3 },
 ];
 
 /** 数值化；空值与非法值一律返回 null（0 视为合法） */
@@ -151,7 +155,7 @@ export function resolvePrice(provider, model) {
   return hit ? { input: hit.input, output: hit.output, source: 'builtin' } : null;
 }
 
-/** 按用量与单价计算费用（美元），单价单位为「每百万 token」 */
+/** 按用量与单价计算费用（人民币），单价单位为「每百万 token」 */
 export function computeCost(usage, price) {
   const promptTokens = numOrNull(usage && usage.promptTokens) ?? 0;
   const completionTokens = numOrNull(usage && usage.completionTokens) ?? 0;
@@ -170,12 +174,12 @@ export function formatTokens(n) {
   return `${Math.round(v / 1000)}k`;
 }
 
-/** 费用展示：小额给足精度，避免显示成一串 0 */
-export function formatCost(usd) {
-  const v = numOrNull(usd) ?? 0;
-  if (v <= 0) return '$0';
-  if (v < 0.0001) return '<$0.0001';
-  if (v < 1) return `$${v.toFixed(4)}`;
-  if (v < 100) return `$${v.toFixed(2)}`;
-  return `$${Math.round(v)}`;
+/** 费用展示（人民币）：小额给足精度，避免显示成一串 0 */
+export function formatCost(cny) {
+  const v = numOrNull(cny) ?? 0;
+  if (v <= 0) return '¥0';
+  if (v < 0.0001) return '<¥0.0001';
+  if (v < 1) return `¥${v.toFixed(4)}`;
+  if (v < 100) return `¥${v.toFixed(2)}`;
+  return `¥${Math.round(v)}`;
 }

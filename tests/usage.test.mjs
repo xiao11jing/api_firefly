@@ -99,7 +99,7 @@ test('resolvePrice 优先用户配置，其次内置参考价', () => {
 
   const builtin = resolvePrice({ price: null }, 'gpt-4o-mini');
   assert.equal(builtin.source, 'builtin');
-  assert.equal(builtin.input, 0.15);
+  assert.equal(builtin.input, 1.1);
 
   assert.equal(resolvePrice({}, 'unknown-model-xyz'), null);
   assert.equal(resolvePrice(null, null), null);
@@ -107,12 +107,12 @@ test('resolvePrice 优先用户配置，其次内置参考价', () => {
 
 test('resolvePrice 内置表按最长特征匹配', () => {
   // mini 应命中 mini 档，而不是 4o 档
-  assert.equal(resolvePrice({}, 'gpt-4o-mini').output, 0.6);
-  assert.equal(resolvePrice({}, 'gpt-4o').output, 10);
-  assert.equal(resolvePrice({}, 'deepseek-reasoner').output, 2.19);
-  assert.equal(resolvePrice({}, 'deepseek-chat').output, 1.1);
-  assert.equal(resolvePrice({}, 'claude-3-5-haiku-20241022').input, 0.8);
-  assert.equal(resolvePrice({}, 'claude-3-5-sonnet-20241022').input, 3);
+  assert.equal(resolvePrice({}, 'gpt-4o-mini').output, 4.3);
+  assert.equal(resolvePrice({}, 'gpt-4o').output, 72);
+  assert.equal(resolvePrice({}, 'deepseek-reasoner').output, 16);
+  assert.equal(resolvePrice({}, 'deepseek-chat').output, 8);
+  assert.equal(resolvePrice({}, 'claude-3-5-haiku-20241022').input, 5.8);
+  assert.equal(resolvePrice({}, 'claude-3-5-sonnet-20241022').input, 22);
 });
 
 test('computeCost 按每百万 token 换算', () => {
@@ -134,11 +134,11 @@ test('formatTokens 缩写与边界', () => {
   assert.equal(formatTokens(123456), '123k');
 });
 
-test('formatCost 小额给出足够精度', () => {
-  assert.equal(formatCost(0), '$0');
-  assert.equal(formatCost(0.00001), '<$0.0001');
-  assert.equal(formatCost(0.00123), '$0.0012');
-  assert.equal(formatCost(0.5), '$0.5000');
-  assert.equal(formatCost(1.234), '$1.23');
-  assert.equal(formatCost(123.4), '$123');
+test('formatCost 人民币小额给出足够精度', () => {
+  assert.equal(formatCost(0), '¥0');
+  assert.equal(formatCost(0.00001), '<¥0.0001');
+  assert.equal(formatCost(0.00123), '¥0.0012');
+  assert.equal(formatCost(0.5), '¥0.5000');
+  assert.equal(formatCost(1.234), '¥1.23');
+  assert.equal(formatCost(123.4), '¥123');
 });

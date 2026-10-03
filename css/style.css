@@ -61,6 +61,11 @@
   --scroll-hover: #465060;
   --brand-glow: rgba(91, 140, 255, 0.55);
 
+  /* 搜索命中高亮 */
+  --mark-bg: rgba(250, 204, 21, 0.26);
+  --mark-active-bg: #facc15;
+  --mark-active-ink: #1a1f27;
+
   --radius: 10px;
   --font: -apple-system, "Segoe UI", "PingFang SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
   --mono: ui-monospace, "SFMono-Regular", "JetBrains Mono", Consolas, "Courier New", monospace;
@@ -119,6 +124,10 @@
 
   --scroll-hover: #b6c0cd;
   --brand-glow: rgba(47, 107, 237, 0.3);
+
+  --mark-bg: rgba(250, 204, 21, 0.45);
+  --mark-active-bg: #f59e0b;
+  --mark-active-ink: #ffffff;
 }
 
 * { box-sizing: border-box; }
@@ -205,6 +214,15 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--surface-2);
   color: var(--ink);
   border-color: var(--border);
+}
+.icon-btn:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+.icon-btn:disabled:hover {
+  background: transparent;
+  color: var(--muted);
+  border-color: transparent;
 }
 
 .session-list {
@@ -618,6 +636,53 @@ button { font-family: inherit; cursor: pointer; }
   background: var(--accent-soft);
   border-color: var(--accent-border);
   color: var(--accent-strong);
+}
+
+/* ---------- 会话内搜索 ---------- */
+.search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  flex-shrink: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.search-bar > svg { color: var(--faint); flex-shrink: 0; }
+
+.search-bar input {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.search-bar input:focus { border-color: var(--accent); }
+.search-bar input::placeholder { color: var(--faint); }
+
+.search-count {
+  min-width: 58px;
+  text-align: right;
+  font-size: 12px;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+mark.search-hit {
+  background: var(--mark-bg);
+  color: inherit;
+  border-radius: 3px;
+}
+mark.search-hit.active {
+  background: var(--mark-active-bg);
+  color: var(--mark-active-ink);
 }
 
 /* ---------- 消息区 ---------- */

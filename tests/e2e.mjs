@@ -3,7 +3,7 @@
  * 运行：node tests/e2e.mjs
  */
 import { chromium } from 'playwright-core';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MOCK_VERSION } from './mock-server.mjs';
 
@@ -50,7 +50,7 @@ if (!health || health.version !== MOCK_VERSION) {
 }
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
+const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 page.on('console', (m) => {
   if (m.type() !== 'error') return;
   const loc = (m.location && m.location().url) || '';
@@ -121,7 +121,7 @@ try {
   check('会话自动命名', (await page.locator('.session-item .s-title').first().textContent()) === '你好，这是端到端测试');
   const singleFoot = await page.locator('.msg.assistant .usage-foot').textContent();
   check('单模型回复显示实测用量', singleFoot.includes('提示 42') && singleFoot.includes('输出 108') && singleFoot.includes('合计 150'), singleFoot);
-  check('按服务配置单价估算费用', singleFoot.includes('$0.0009'), singleFoot);
+  check('按服务配置单价估算费用（人民币）', singleFoot.includes('¥0.0009'), singleFoot);
   check('页脚显示耗时', /用时 \d+\.\ds/.test(singleFoot), singleFoot);
   await page.screenshot({ path: join(OUT, '03-chat.png') });
 
@@ -133,6 +133,11 @@ try {
   // ---------- 6. 新会话 + 多图附件 ----------
   await page.click('#btn-new-chat');
   check('新会话进入空状态', (await page.locator('.empty-state h3').textContent()) === '开始新对话');
+  check(
+    '附件入口为加号图标',
+    (await page.locator('#btn-attach circle').count()) === 0 &&
+      (await page.locator('#btn-attach path').getAttribute('d')).includes('M8 3.4v9.2')
+  );
   await page.setInputFiles('#file-input', [IMG_PATH, IMG_PATH_2]);
   await page.locator('#attach-bar:not(.hidden)').waitFor({ timeout: 5000 });
   await page.waitForFunction(() => document.querySelectorAll('.attach-chip').length === 2, null, { timeout: 10000 });
@@ -193,6 +198,9 @@ try {
   await page.locator('.msg.user .doc-part').nth(0).locator('summary').click();
   const mdText = await page.locator('.msg.user .doc-part .doc-text').nth(0).textContent();
   check('展开可见 Markdown 提取文本', mdText.includes('会议纪要') && mdText.includes('第一条结论'), mdText.slice(0, 40));
+  // 收起，供后面的搜索用例验证「命中折叠内容时自动展开」
+  await page.locator('.msg.user .doc-part').nth(0).locator('summary').click();
+  check('文档预览可收起', (await page.locator('.msg.user .doc-part[open]').count()) === 0);
 
   await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
   const docReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
@@ -201,6 +209,67 @@ try {
   check('PDF 文本也内嵌（含中文）', docContent.includes('MiMo Attachment Fixture') && docContent.includes('中文文档测试'));
   check('图片未混入纯文本文档请求', !docContent.includes('image_url'));
   await page.screenshot({ path: join(OUT, '05-documents.png') });
+
+  // ---------- 6b-2. 会话导出 Markdown ----------
+  const [download] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export')]);
+  check('导出文件名取会话标题', download.suggestedFilename() === '读一下这些文档.md', download.suggestedFilename());
+  const exportedPath = join(OUT, 'exported.md');
+  await download.saveAs(exportedPath);
+  const exported = readFileSync(exportedPath, 'utf8');
+  check(
+    '导出头部含标题、时间与消息数',
+    exported.startsWith('# 读一下这些文档\n') && /- 导出时间：\d{4}-\d{2}-\d{2} \d{2}:\d{2}/.test(exported) && /- 消息数：2/.test(exported),
+    exported.split('\n').slice(0, 4).join(' / ')
+  );
+  check('导出含用户正文与文档正文', exported.includes('读一下这些文档') && exported.includes('第一条结论：先做多模型对话。'));
+  check(
+    '导出含附件名、模型标注与外部说明',
+    exported.includes('**文档附件：notes.md**') &&
+      exported.includes('文档附件：payload.json') &&
+      /## AI（Mock 服务 · mock-model）/.test(exported) &&
+      exported.includes('图片附件仅保留文件名')
+  );
+  check(
+    '导出含用量与耗时备注',
+    /> 用量：提示 42 · 输出 108 · 合计 150 · 用时 \d+\.\ds/.test(exported),
+    (exported.match(/> 用量：[^\n]*/) || [''])[0]
+  );
+  check('导出不写入图片/文档的原始二进制', !exported.includes('data:image/') && !exported.includes('base64'));
+
+  // ---------- 6b-3. 会话内搜索 ----------
+  await page.keyboard.press('Control+f');
+  check('Ctrl+F 打开搜索栏', await page.locator('#search-bar').isVisible());
+
+  await page.fill('#search-input', '纪要');
+  await page.waitForFunction(() => document.querySelectorAll('mark.search-hit').length === 1);
+  check('能搜到折叠文档里的文本', (await page.locator('mark.search-hit').count()) === 1);
+  check('当前命中标记为激活', (await page.locator('mark.search-hit.active').count()) === 1);
+  check('命中折叠内容时自动展开', await page.locator('.msg.user .doc-part').first().evaluate((el) => el.open));
+  check('显示命中计数', (await page.locator('#search-count').textContent()) === '1/1');
+
+  await page.fill('#search-input', '点');
+  await page.waitForFunction(() => document.querySelectorAll('mark.search-hit').length === 2);
+  check('多命中时停在第一个', (await page.locator('#search-count').textContent()) === '1/2');
+  check('首个命中即高亮项', (await page.locator('mark.search-hit.active').textContent()) === '点');
+  await page.press('#search-input', 'Enter');
+  check('回车跳到下一个命中', (await page.locator('#search-count').textContent()) === '2/2');
+  await page.press('#search-input', 'Enter');
+  check('到末尾后回到第一个', (await page.locator('#search-count').textContent()) === '1/2');
+  await page.locator('#btn-search-prev').click();
+  check('上一个按钮可反向跳转', (await page.locator('#search-count').textContent()) === '2/2');
+  await page.screenshot({ path: join(OUT, '05b-search.png') });
+
+  await page.fill('#search-input', '这个词不存在zzz');
+  await page.waitForFunction(() => document.querySelector('#search-count').textContent === '无匹配');
+  check('无命中时给出提示', (await page.locator('mark.search-hit').count()) === 0);
+
+  await page.keyboard.press('Escape');
+  check('Esc 关闭搜索栏', await page.locator('#search-bar').isHidden());
+  check('关闭后清除高亮与计数', (await page.locator('mark.search-hit').count()) === 0 && (await page.locator('#search-count').textContent()) === '');
+
+  // 切到空会话时搜索/导出应被禁用
+  await page.click('#btn-new-chat');
+  check('空会话禁用搜索与导出', (await page.locator('#btn-search').isDisabled()) && (await page.locator('#btn-export').isDisabled()));
 
   // ---------- 6c. 不支持的文件类型 + 附件数量上限 ----------
   await page.click('#btn-new-chat');
@@ -251,7 +320,7 @@ try {
     cols.map((c) => c.slice(0, 18)).join(' | ')
   );
   const branchFoots = await page.locator('.compare-row .usage-foot').allTextContents();
-  check('两栏各自显示用量与费用', branchFoots.every((f) => f.includes('提示 42') && f.includes('合计 150') && f.includes('$0.0009')), branchFoots.join(' | '));
+  check('两栏各自显示用量与费用', branchFoots.every((f) => f.includes('提示 42') && f.includes('合计 150') && f.includes('¥0.0009')), branchFoots.join(' | '));
 
   // 报文层面确认两个模型分支拿到的是同一轮用户消息
   const cmpReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());

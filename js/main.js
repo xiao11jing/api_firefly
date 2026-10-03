@@ -15,6 +15,8 @@ import {
   toMessageParts,
 } from './attachments.js';
 import { extractPdfText } from './pdf-text.js';
+import { exportFilename, sessionToMarkdown } from './export.js';
+import { normalizeQuery, searchSession } from './search.js';
 import {
   computeCost,
   estimateApiTokens,
@@ -501,8 +503,8 @@ function renderUsageFoot(msg) {
       const item = usageItem(formatCost(computeCost(u, price).total), 'u-cost');
       item.title =
         price.source === 'provider'
-          ? '按该服务配置的单价估算'
-          : '按内置参考价估算（可能已过时），可在 API 服务设置中覆盖';
+          ? '按该服务配置的单价估算（人民币）'
+          : '按内置参考价估算（人民币，可能已过时），可在 API 服务设置中覆盖';
       foot.appendChild(item);
     }
     foot.title = u.estimated
@@ -581,9 +583,11 @@ function renderMessageEl(msg) {
 function renderMessages({ keepScroll = false } = {}) {
   const box = $('#messages');
   const session = store.getActiveSession(state);
+  renderSessionTools(session);
   if (!session || !session.messages.length) {
     renderEmptyState();
     $('#topbar-title').textContent = session ? session.title : '新会话';
+    refreshSearch();
     return;
   }
   const nearBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 120;
@@ -604,6 +608,14 @@ function renderMessages({ keepScroll = false } = {}) {
   box.appendChild(col);
   $('#topbar-title').textContent = session.title;
   if (!keepScroll || nearBottom) box.scrollTop = box.scrollHeight;
+  refreshSearch();
+}
+
+/** 空会话时搜索与导出没有意义，直接禁用 */
+function renderSessionTools(session) {
+  const hasMessages = !!(session && session.messages.length);
+  $('#btn-search').disabled = !hasMessages;
+  $('#btn-export').disabled = !hasMessages;
 }
 
 /** 同一批对比回复左右分栏展示 */
@@ -875,6 +887,166 @@ async function retryFrom(errorMsgId) {
 
 function stop() {
   for (const c of controllers) c.abort();
+}
+
+// ---------- 会话导出 ----------
+
+function downloadText(filename, text) {
+  const url = URL.createObjectURL(new Blob([text], { type: 'text/markdown;charset=utf-8' }));
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function exportSession() {
+  const session = store.getActiveSession(state);
+  if (!session || !session.messages.length) {
+    toast('当前会话还没有可导出的消息', 'error');
+    return;
+  }
+  const markdown = sessionToMarkdown(session, {
+    now: new Date(),
+    providerName: (id) => (providerById(id) || {}).name || '',
+  });
+  const filename = exportFilename(session);
+  downloadText(filename, markdown);
+  toast(`已导出 ${filename}`);
+}
+
+// ---------- 会话内搜索 ----------
+
+const searchState = { hits: [], index: 0 };
+let searchTimer = null;
+
+function searchOpen() {
+  return !$('#search-bar').classList.contains('hidden');
+}
+
+function setSearchCount(text) {
+  $('#search-count').textContent = text;
+}
+
+/** 清掉已渲染的高亮，还原成原始文本 */
+function clearSearchHighlights() {
+  const box = $('#messages');
+  for (const mark of box.querySelectorAll('mark.search-hit')) {
+    const parent = mark.parentNode;
+    if (!parent) continue;
+    parent.replaceChild(document.createTextNode(mark.textContent), mark);
+    parent.normalize();
+  }
+  searchState.hits = [];
+  searchState.index = 0;
+}
+
+/** 在一条消息内把匹配片段包进 <mark>（跳过已包过的节点） */
+function highlightIn(root, query) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      if (!node.nodeValue || !node.nodeValue.trim()) return NodeFilter.FILTER_REJECT;
+      if (node.parentElement && node.parentElement.closest('mark.search-hit')) return NodeFilter.FILTER_REJECT;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+  const nodes = [];
+  while (walker.nextNode()) nodes.push(walker.currentNode);
+
+  for (const node of nodes) {
+    const text = node.nodeValue;
+    const lower = text.toLowerCase();
+    let idx = lower.indexOf(query);
+    if (idx === -1) continue;
+
+    const frag = document.createDocumentFragment();
+    let last = 0;
+    while (idx !== -1) {
+      if (idx > last) frag.appendChild(document.createTextNode(text.slice(last, idx)));
+      const mark = document.createElement('mark');
+      mark.className = 'search-hit';
+      mark.textContent = text.slice(idx, idx + query.length);
+      frag.appendChild(mark);
+      last = idx + query.length;
+      idx = lower.indexOf(query, last);
+    }
+    if (last < text.length) frag.appendChild(document.createTextNode(text.slice(last)));
+    node.parentNode.replaceChild(frag, node);
+  }
+}
+
+function applySearch() {
+  clearSearchHighlights();
+  const query = normalizeQuery($('#search-input').value);
+  if (!query) {
+    setSearchCount('');
+    return;
+  }
+
+  const session = store.getActiveSession(state);
+  const { total, messageIds } = searchSession(session, query);
+  if (!total) {
+    setSearchCount('无匹配');
+    return;
+  }
+
+  const box = $('#messages');
+  for (const id of messageIds) {
+    const el = box.querySelector(`[data-id="${id}"]`);
+    if (el) highlightIn(el, query);
+  }
+
+  searchState.hits = Array.from(box.querySelectorAll('mark.search-hit'));
+  if (!searchState.hits.length) {
+    setSearchCount('无匹配');
+    return;
+  }
+  focusHit(0);
+}
+
+function focusHit(index) {
+  const hits = searchState.hits;
+  if (!hits.length) return;
+  searchState.index = ((index % hits.length) + hits.length) % hits.length;
+  const active = hits[searchState.index];
+  for (const hit of hits) hit.classList.toggle('active', hit === active);
+  // 命中可能在折叠的文档预览里，先展开再滚动
+  const details = active.closest('details');
+  if (details && !details.open) details.open = true;
+  active.scrollIntoView({ block: 'center' });
+  setSearchCount(`${searchState.index + 1}/${hits.length}`);
+}
+
+function stepSearch(delta) {
+  if (!searchState.hits.length) return;
+  focusHit(searchState.index + delta);
+}
+
+/** 消息重绘后（切会话、流式结束等）重新套用高亮 */
+function refreshSearch() {
+  if (!searchOpen()) return;
+  applySearch();
+}
+
+function openSearch() {
+  if ($('#btn-search').disabled) {
+    toast('当前会话还没有可搜索的消息', 'error');
+    return;
+  }
+  $('#search-bar').classList.remove('hidden');
+  const input = $('#search-input');
+  input.focus();
+  input.select();
+  applySearch();
+}
+
+function closeSearch() {
+  $('#search-bar').classList.add('hidden');
+  $('#search-input').value = '';
+  clearSearchHighlights();
+  setSearchCount('');
 }
 
 // ---------- 附件 ----------
@@ -1284,6 +1456,25 @@ function bind() {
     openSettings('api');
   });
   $('#btn-compare-toggle').addEventListener('click', toggleCompare);
+  $('#btn-export').addEventListener('click', exportSession);
+  $('#btn-search').addEventListener('click', openSearch);
+  $('#btn-search-close').addEventListener('click', closeSearch);
+  $('#btn-search-prev').addEventListener('click', () => stepSearch(-1));
+  $('#btn-search-next').addEventListener('click', () => stepSearch(1));
+  const searchInput = $('#search-input');
+  searchInput.addEventListener('input', () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(applySearch, 120);
+  });
+  searchInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      stepSearch(e.shiftKey ? -1 : 1);
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      closeSearch();
+    }
+  });
   $('#model-select').addEventListener('click', (e) => {
     e.stopPropagation();
     if (!state.providers.length) {
@@ -1300,12 +1491,24 @@ function bind() {
     if (e.target === $('#settings-mask')) closeSettings();
   });
   document.addEventListener('keydown', (e) => {
+    // Ctrl/Cmd+F 走会话内搜索（设置弹窗打开时不拦截）
+    if ((e.ctrlKey || e.metaKey) && !e.altKey && e.key.toLowerCase() === 'f') {
+      if ($('#settings-mask').classList.contains('hidden')) {
+        e.preventDefault();
+        openSearch();
+      }
+      return;
+    }
     if (e.key !== 'Escape') return;
     if (!$('#model-menu').classList.contains('hidden')) {
       closeModelMenu();
       return;
     }
-    if (!$('#settings-mask').classList.contains('hidden')) closeSettings();
+    if (!$('#settings-mask').classList.contains('hidden')) {
+      closeSettings();
+      return;
+    }
+    if (searchOpen()) closeSearch();
   });
 
   $('#btn-add-provider').addEventListener('click', resetProviderForm);
