@@ -5,7 +5,7 @@
   "type": "module",
   "description": "多模型 AI 对话客户端 MVP",
   "scripts": {
-    "test": "node --test tests/",
+    "test": "node --test \"tests/*.test.mjs\"",
     "mock": "node tests/mock-server.mjs"
   }
 }
