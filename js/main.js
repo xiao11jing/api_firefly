@@ -124,48 +124,119 @@ function startRename(item, session, titleEl) {
 
 // ---------- 模型选择 ----------
 
+const GEAR_SVG =
+  '<svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13.3 9.6a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.66 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.66h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.66 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.66h-.06a1.1 1.1 0 0 0-1 .67Z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>';
+
+const CHECK_SVG =
+  '<svg viewBox="0 0 14 14" width="14" height="14"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+
+/** 由服务 id 生成稳定的头像色 */
+function providerColor(id) {
+  let h = 0;
+  for (const ch of String(id)) h = (h * 31 + ch.charCodeAt(0)) % 360;
+  return `hsl(${h} 62% 46%)`;
+}
+
+function closeModelMenu() {
+  $('#model-menu').classList.add('hidden');
+  $('#model-pill').classList.remove('open');
+  $('#model-select').setAttribute('aria-expanded', 'false');
+}
+
+function toggleModelMenu() {
+  const menu = $('#model-menu');
+  const willOpen = menu.classList.contains('hidden');
+  menu.classList.toggle('hidden', !willOpen);
+  $('#model-pill').classList.toggle('open', willOpen);
+  $('#model-select').setAttribute('aria-expanded', String(willOpen));
+}
+
 function renderModelSelect() {
-  const sel = $('#model-select');
   const dot = $('#model-dot');
   const pill = $('#model-pill');
-  sel.innerHTML = '';
+  const label = $('#model-label');
+  const menu = $('#model-menu');
+  const list = $('#model-menu-list');
+  list.innerHTML = '';
+  const oldFoot = menu.querySelector('.model-menu-foot');
+  if (oldFoot) oldFoot.remove();
 
   if (!state.providers.length) {
-    const opt = document.createElement('option');
-    opt.value = '';
-    opt.textContent = '配置 API 服务';
-    sel.appendChild(opt);
-    sel.disabled = true;
+    label.textContent = '配置 API 服务';
     dot.classList.remove('on');
     pill.classList.add('attention');
+    closeModelMenu();
     return;
   }
-  sel.disabled = false;
   pill.classList.remove('attention');
-
-  const placeholder = document.createElement('option');
-  placeholder.value = '';
-  placeholder.textContent = '选择模型…';
-  sel.appendChild(placeholder);
 
   let hasMatch = false;
   for (const p of state.providers) {
-    const group = document.createElement('optgroup');
-    group.label = p.name;
-    for (const m of p.models.length ? p.models : ['（未填模型名）']) {
-      const opt = document.createElement('option');
-      opt.value = `${p.id}::${m}`;
-      opt.textContent = m;
-      if (state.selectedModel && state.selectedModel.providerId === p.id && state.selectedModel.model === m) {
-        opt.selected = true;
-        hasMatch = true;
+    const head = document.createElement('div');
+    head.className = 'menu-group';
+    head.textContent = p.name;
+    list.appendChild(head);
+
+    const models = p.models.length ? p.models : ['（未填模型名）'];
+    for (const m of models) {
+      const active = !!(
+        state.selectedModel &&
+        state.selectedModel.providerId === p.id &&
+        state.selectedModel.model === m
+      );
+      if (active) hasMatch = true;
+
+      const item = document.createElement('button');
+      item.type = 'button';
+      item.className = 'menu-item' + (active ? ' active' : '');
+      item.setAttribute('role', 'option');
+      item.setAttribute('aria-selected', String(active));
+
+      const icon = document.createElement('span');
+      icon.className = 'menu-icon';
+      icon.style.background = providerColor(p.id);
+      icon.textContent = (p.name.trim()[0] || '?').toUpperCase();
+
+      const name = document.createElement('span');
+      name.className = 'menu-name';
+      name.textContent = m;
+
+      item.append(icon, name);
+      if (active) {
+        const check = document.createElement('span');
+        check.className = 'menu-check';
+        check.innerHTML = CHECK_SVG;
+        item.appendChild(check);
       }
-      group.appendChild(opt);
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        state.selectedModel = { providerId: p.id, model: m };
+        persist();
+        closeModelMenu();
+        renderModelSelect();
+      });
+      list.appendChild(item);
     }
-    sel.appendChild(group);
   }
-  sel.value = hasMatch ? `${state.selectedModel.providerId}::${state.selectedModel.model}` : '';
-  dot.classList.toggle('on', hasMatch);
+
+  const foot = document.createElement('button');
+  foot.type = 'button';
+  foot.className = 'model-menu-foot';
+  foot.innerHTML = `${GEAR_SVG}<span>配置自定义模型</span>`;
+  foot.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeModelMenu();
+    openSettings();
+  });
+  menu.appendChild(foot);
+
+  if (state.selectedModel) {
+    label.textContent = state.selectedModel.model;
+    dot.classList.toggle('on', !!providerById(state.selectedModel.providerId));
+  } else {
+    label.textContent = '选择模型…';
+    dot.classList.remove('on');
+  }
 }
 
 // ---------- 消息渲染 ----------
@@ -330,10 +401,13 @@ function setStreamingUI(on) {
 function validateSend() {
   const hasText = $('#input').value.trim().length > 0;
   if (!hasText && !pendingImage) return '请输入消息或添加图片';
-  if (!state.providers.length) return '请先在设置中添加 API 服务';
-  if (!state.selectedModel) return '请在顶部选择模型';
+  if (!state.providers.length) return '请先添加 API 服务';
+  if (!state.selectedModel) return '请选择模型';
   const p = selectedProvider();
   if (!p) return '所选服务不存在，请重新选择';
+  if (p.models.length && !p.models.includes(state.selectedModel.model)) {
+    return '所选模型已不在该服务的模型列表中，请重新选择';
+  }
   return null;
 }
 
@@ -662,34 +736,38 @@ function bind() {
     $('#input').focus();
   });
 
-  $('#btn-pill-settings').addEventListener('click', openSettings);
-  $('#model-pill').addEventListener('click', (e) => {
-    // 未配置任何服务时，点击胶囊任意位置都可进入设置
-    if (!state.providers.length && e.target.id !== 'model-select') openSettings();
+  $('#btn-pill-settings').addEventListener('click', (e) => {
+    e.stopPropagation();
+    closeModelMenu();
+    openSettings();
+  });
+  $('#model-select').addEventListener('click', (e) => {
+    e.stopPropagation();
+    if (!state.providers.length) {
+      openSettings();
+      return;
+    }
+    toggleModelMenu();
+  });
+  document.addEventListener('click', (e) => {
+    if (!$('#model-pill').contains(e.target)) closeModelMenu();
   });
   $('#btn-close-settings').addEventListener('click', closeSettings);
   $('#settings-mask').addEventListener('click', (e) => {
     if (e.target === $('#settings-mask')) closeSettings();
   });
   document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape' && !$('#settings-mask').classList.contains('hidden')) closeSettings();
+    if (e.key !== 'Escape') return;
+    if (!$('#model-menu').classList.contains('hidden')) {
+      closeModelMenu();
+      return;
+    }
+    if (!$('#settings-mask').classList.contains('hidden')) closeSettings();
   });
 
   $('#btn-add-provider').addEventListener('click', resetProviderForm);
   $('#provider-form').addEventListener('submit', saveProviderForm);
   $('#btn-del-provider').addEventListener('click', deleteProviderForm);
-
-  $('#model-select').addEventListener('change', (e) => {
-    const v = e.target.value;
-    if (!v) {
-      state.selectedModel = null;
-    } else {
-      const sep = v.indexOf('::');
-      state.selectedModel = { providerId: v.slice(0, sep), model: v.slice(sep + 2) };
-    }
-    persist();
-    renderModelSelect();
-  });
 
   $('#btn-send').addEventListener('click', send);
   $('#btn-stop').addEventListener('click', stop);

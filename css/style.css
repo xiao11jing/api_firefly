@@ -267,25 +267,32 @@ button { font-family: inherit; cursor: pointer; }
     0 0 9px rgba(74, 222, 128, 0.55);
 }
 
-.model-select {
-  appearance: none;
+.model-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
   border: none;
   background: transparent;
-  color: var(--ink);
-  font-family: var(--font);
+  padding: 0;
+  margin: 0;
+  font-family: inherit;
+  cursor: pointer;
+  color: inherit;
+  min-width: 0;
+}
+.model-label {
   font-size: 13px;
   font-weight: 500;
   letter-spacing: 0.1px;
-  outline: none;
-  max-width: 220px;
-  padding: 0;
-  cursor: pointer;
+  color: var(--ink);
+  max-width: 210px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   transition: color 0.15s;
 }
-.model-select:hover { color: #fff; }
-.model-select option,
-.model-select optgroup { background: var(--surface); color: var(--ink); }
-.model-select:disabled { color: var(--muted); cursor: pointer; }
+.model-trigger:hover .model-label { color: #fff; }
+.model-pill.attention .model-label { color: var(--accent-strong); }
 
 .pill-chevron {
   display: inline-flex;
@@ -294,7 +301,125 @@ button { font-family: inherit; cursor: pointer; }
   transition: transform 0.22s cubic-bezier(0.2, 0.8, 0.3, 1), color 0.18s;
 }
 .model-pill:hover .pill-chevron { color: var(--muted); transform: translateY(1px); }
-.model-pill:focus-within .pill-chevron { transform: rotate(180deg); color: var(--accent-strong); }
+.model-pill.open .pill-chevron { transform: rotate(180deg); color: var(--accent-strong); }
+
+/* ---------- 模型下拉面板 ---------- */
+.model-menu {
+  position: absolute;
+  bottom: calc(100% + 13px);
+  right: -8px;
+  width: 300px;
+  padding: 6px;
+  background: #1c222b;
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  box-shadow:
+    0 22px 55px rgba(0, 0, 0, 0.55),
+    0 2px 8px rgba(0, 0, 0, 0.35),
+    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+  z-index: 60;
+  transform-origin: bottom right;
+  animation: menu-in 0.16s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+.model-menu::after {
+  content: "";
+  position: absolute;
+  bottom: -6px;
+  right: 34px;
+  width: 11px;
+  height: 11px;
+  background: #1c222b;
+  border-right: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+  transform: rotate(45deg);
+  border-radius: 0 0 3px 0;
+}
+@keyframes menu-in {
+  from { opacity: 0; transform: translateY(7px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.model-menu-list {
+  max-height: 300px;
+  overflow-y: auto;
+  overflow-x: hidden;
+}
+
+.menu-group {
+  font-size: 11px;
+  color: var(--faint);
+  padding: 11px 10px 5px;
+  letter-spacing: 0.5px;
+}
+.menu-group:first-child { padding-top: 6px; }
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 10px;
+  border: none;
+  background: transparent;
+  border-radius: 10px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.14s ease;
+}
+.menu-item:hover { background: var(--surface-2); }
+.menu-item.active { background: rgba(91, 140, 255, 0.13); }
+
+.menu-icon {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fff;
+  flex-shrink: 0;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.menu-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 500;
+}
+
+.menu-check {
+  display: inline-flex;
+  color: var(--accent-strong);
+  flex-shrink: 0;
+}
+
+.model-menu-foot {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  margin-top: 5px;
+  padding: 10px 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 13px;
+  border-radius: 0 0 9px 9px;
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.model-menu-foot:hover { color: var(--ink); background: var(--surface-2); }
+.model-menu-foot svg { flex-shrink: 0; }
 
 .pill-divider {
   width: 1px;

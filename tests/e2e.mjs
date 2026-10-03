@@ -61,10 +61,23 @@ try {
   await page.click('#btn-close-settings');
   await page.waitForFunction(() => document.querySelector('#settings-mask').classList.contains('hidden'));
 
-  // ---------- 3. 模型自动选中 ----------
-  const selVal = await page.locator('#model-select').inputValue();
-  check('模型自动选中', selVal.includes('::mock-model'), `value=${selVal}`);
-  check('模型指示灯点亮', await page.locator('#model-dot.on').count() === 1);
+  // ---------- 3. 模型自动选中 + 下拉面板 ----------
+  const label = await page.locator('#model-label').textContent();
+  check('模型自动选中', label.includes('mock-model'), `label=${label}`);
+  check('模型指示灯点亮', (await page.locator('#model-dot.on').count()) === 1);
+
+  await page.click('#model-select');
+  await page.locator('#model-menu:not(.hidden)').waitFor({ timeout: 3000 });
+  await page.waitForTimeout(300); // 等入场动画结束再断言/截图
+  check('菜单按服务分组', (await page.locator('#model-menu .menu-group').first().textContent()) === 'Mock 服务');
+  check('菜单列出模型项', (await page.locator('#model-menu .menu-item').count()) === 1);
+  check('当前模型高亮', (await page.locator('#model-menu .menu-item.active').count()) === 1);
+  check('选中项带勾选图标', (await page.locator('#model-menu .menu-check').count()) === 1);
+  check('菜单底部有配置入口', await page.locator('.model-menu-foot').isVisible());
+  await page.screenshot({ path: join(OUT, '02b-model-menu.png') });
+  await page.click('#model-menu .menu-item');
+  await page.waitForFunction(() => document.querySelector('#model-menu').classList.contains('hidden'));
+  check('点击模型后菜单关闭', true);
 
   // ---------- 4. 发送消息并流式接收 ----------
   await page.fill('#input', '你好，这是端到端测试');
@@ -87,7 +100,7 @@ try {
   // ---------- 5. 刷新后持久化 ----------
   await page.reload({ waitUntil: 'networkidle' });
   check('刷新后消息仍在', (await page.locator('.msg.user').count()) >= 1);
-  check('刷新后 provider 仍在', await page.locator('#model-select').inputValue() !== '');
+  check('刷新后 provider 仍在', (await page.locator('#model-label').textContent()).includes('mock-model'));
 
   // ---------- 6. 新会话 + 图片附件 ----------
   await page.click('#btn-new-chat');
