@@ -77,6 +77,13 @@ function usageNote(msg) {
   return bits.join(' · ');
 }
 
+/** 当轮系统提示块（正文可能较长，用代码块包住） */
+function promptBlock(snapshot) {
+  const label = snapshot.name ? `**系统提示（${snapshot.name}）**` : '**系统提示**';
+  const fence = fenceFor(snapshot.text);
+  return [label, '', `${fence}text`, snapshot.text, fence, ''];
+}
+
 /**
  * 会话 → Markdown 文本。
  * @param {object} session
@@ -88,6 +95,7 @@ export function sessionToMarkdown(session, { now = new Date(), providerName = ()
   if (!session) return '';
   const messages = session.messages || [];
   const lines = [];
+  let lastPrompt = ''; // 上一条回复用过的系统提示正文，用于「同上」去重
 
   lines.push(`# ${session.title || '新会话'}`, '');
   lines.push(`- 导出时间：${formatDateTime(now)}`);
@@ -103,6 +111,20 @@ export function sessionToMarkdown(session, { now = new Date(), providerName = ()
     if (msg.error) {
       lines.push(`> 生成失败：${messageText(msg) || '未知错误'}`, '');
     } else {
+      if (!isUser) {
+        const snapshot = msg.systemPrompt && msg.systemPrompt.text ? msg.systemPrompt : null;
+        const text = snapshot ? snapshot.text : '';
+        if (text && text !== lastPrompt) {
+          lines.push(...promptBlock(snapshot));
+          lastPrompt = text;
+        } else if (text) {
+          lines.push('> 系统提示：同上', '');
+        } else if (lastPrompt) {
+          lines.push('> 本轮未使用系统提示', '');
+          lastPrompt = '';
+        }
+      }
+
       for (const part of msg.content || []) {
         if (part.type === 'text') {
           const text = (part.text || '').trim();

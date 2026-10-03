@@ -12,6 +12,10 @@ export const DEFAULT_THEME = 'dark';
 /** 对比模式最多同时对比的模型数 */
 export const MAX_COMPARE_TARGETS = 2;
 
+/** 单个提示词模板正文的字符上限（同时保护 localStorage 容量） */
+export const MAX_PROMPT_CHARS = 20000;
+const MAX_PROMPT_NAME = 60;
+
 /** 主题归一化：未知取值回退到默认主题 */
 export function normalizeTheme(value) {
   return THEMES.includes(value) ? value : DEFAULT_THEME;
@@ -26,6 +30,7 @@ export function defaultState() {
     selectedModel: null, // { providerId, model }
     settings: { theme: DEFAULT_THEME },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
+    promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
 }
 
@@ -77,6 +82,54 @@ export function setCompareTargets(state, targets) {
   return state.compare.targets;
 }
 
+// ---------- 提示词模板 ----------
+
+/** 新建或更新模板；名称为空时返回 null */
+export function savePromptTemplate(state, { id, name, content } = {}) {
+  const now = Date.now();
+  const existing = id ? state.promptTemplates.find((t) => t.id === id) : null;
+  const clean = {
+    id: existing ? existing.id : uid(),
+    name: String(name || '').trim().slice(0, MAX_PROMPT_NAME),
+    content: String(content || '').slice(0, MAX_PROMPT_CHARS),
+    createdAt: existing ? existing.createdAt : now,
+    updatedAt: now,
+  };
+  if (!clean.name) return null;
+  if (existing) Object.assign(existing, clean);
+  else state.promptTemplates.push(clean);
+  return clean;
+}
+
+export function deletePromptTemplate(state, id) {
+  const idx = state.promptTemplates.findIndex((t) => t.id === id);
+  if (idx === -1) return false;
+  state.promptTemplates.splice(idx, 1);
+  return true;
+}
+
+export function findPromptTemplate(state, id) {
+  return state.promptTemplates.find((t) => t.id === id) || null;
+}
+
+/**
+ * 把模板正文快照到会话（模板后续被改动或删除都不影响已有会话）。
+ * template 传 null 表示该会话不使用系统提示。
+ */
+export function setSessionSystemPrompt(state, sessionId, template) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s) return null;
+  s.systemPrompt = template
+    ? normalizeSystemPrompt({ templateId: template.id, name: template.name, text: template.content })
+    : null;
+  return s.systemPrompt;
+}
+
+/** 会话当前生效的系统提示文本（没有则返回空串） */
+export function systemPromptText(session) {
+  return (session && session.systemPrompt && session.systemPrompt.text) || '';
+}
+
 function normalizeState(s) {
   const base = defaultState();
   if (!s || typeof s !== 'object') return base;
@@ -97,6 +150,9 @@ function normalizeState(s) {
       theme: normalizeTheme(s.settings && s.settings.theme),
     },
     compare: normalizeCompare(s.compare),
+    promptTemplates: Array.isArray(s.promptTemplates)
+      ? s.promptTemplates.map(normalizeTemplate).filter(Boolean)
+      : [],
   };
   if (state.activeSessionId && !state.sessions.some((x) => x.id === state.activeSessionId)) {
     state.activeSessionId = state.sessions.length ? state.sessions[0].id : null;
@@ -123,6 +179,44 @@ function normalizeCompare(compare) {
   return { enabled: compare.enabled === true, targets };
 }
 
+function normalizeTemplate(t) {
+  if (!t || typeof t !== 'object' || typeof t.id !== 'string' || !t.id) return null;
+  const name = String(t.name || '').trim().slice(0, MAX_PROMPT_NAME);
+  if (!name) return null;
+  const createdAt = typeof t.createdAt === 'number' ? t.createdAt : Date.now();
+  return {
+    id: t.id,
+    name,
+    content: String(t.content || '').slice(0, MAX_PROMPT_CHARS),
+    createdAt,
+    updatedAt: typeof t.updatedAt === 'number' ? t.updatedAt : createdAt,
+  };
+}
+
+/** 会话上保存的系统提示快照：{ templateId, name, text } */
+function normalizeSystemPrompt(sp) {
+  if (!sp || typeof sp !== 'object') return null;
+  const text = String(sp.text || '').trim().slice(0, MAX_PROMPT_CHARS);
+  if (!text) return null;
+  return {
+    templateId: typeof sp.templateId === 'string' && sp.templateId ? sp.templateId : null,
+    name: String(sp.name || '').trim().slice(0, MAX_PROMPT_NAME),
+    text,
+  };
+}
+
+/** 回复上记录的当轮系统提示：{ name, text } */
+function normalizePromptSnapshot(sp) {
+  if (typeof sp === 'string') {
+    const text = sp.trim();
+    return text ? { name: '', text } : null;
+  }
+  if (!sp || typeof sp !== 'object') return null;
+  const text = String(sp.text || '').trim();
+  if (!text) return null;
+  return { name: String(sp.name || '').trim().slice(0, MAX_PROMPT_NAME), text };
+}
+
 function normalizeMessage(m) {
   if (!m || typeof m !== 'object' || typeof m.id !== 'string' || !Array.isArray(m.content)) return null;
   const msg = {
@@ -137,6 +231,8 @@ function normalizeMessage(m) {
   if (typeof m.batchId === 'string' && m.batchId) msg.batchId = m.batchId;
   const usage = normalizeUsage(m.usage);
   if (usage) msg.usage = usage;
+  const prompt = normalizePromptSnapshot(m.systemPrompt);
+  if (prompt) msg.systemPrompt = prompt;
   if (typeof m.ms === 'number' && Number.isFinite(m.ms) && m.ms >= 0) msg.ms = m.ms;
   return msg;
 }
@@ -147,6 +243,7 @@ function normalizeSession(s) {
     id: s.id,
     title: typeof s.title === 'string' && s.title ? s.title : '新会话',
     model: s.model && typeof s.model === 'object' ? s.model : null,
+    systemPrompt: normalizeSystemPrompt(s.systemPrompt),
     messages: Array.isArray(s.messages) ? s.messages.map(normalizeMessage).filter(Boolean) : [],
     createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
     updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
@@ -240,6 +337,7 @@ export function resetMessage(state, sessionId, messageId) {
   delete m.error;
   delete m.usage;
   delete m.ms;
+  delete m.systemPrompt;
   s.updatedAt = Date.now();
   return m;
 }

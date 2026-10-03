@@ -4,6 +4,7 @@ import {
   STORAGE_KEY,
   DEFAULT_THEME,
   MAX_COMPARE_TARGETS,
+  MAX_PROMPT_CHARS,
   defaultState,
   loadState,
   saveState,
@@ -23,6 +24,11 @@ import {
   setTheme,
   setCompareEnabled,
   setCompareTargets,
+  savePromptTemplate,
+  deletePromptTemplate,
+  findPromptTemplate,
+  setSessionSystemPrompt,
+  systemPromptText,
 } from '../js/storage.js';
 
 function fakeStorage() {
@@ -343,6 +349,153 @@ test('removeMessage 与 resetMessage', () => {
   assert.equal(reset.error, undefined);
   assert.equal(reset.usage, undefined);
   assert.equal(reset.ms, undefined);
+});
+
+test('模板库：新建、更新与删除', () => {
+  const state = defaultState();
+  assert.deepEqual(state.promptTemplates, []);
+
+  const created = savePromptTemplate(state, { name: ' 写作助手 ', content: '你是一位编辑' });
+  assert.ok(created.id);
+  assert.equal(created.name, '写作助手');
+  assert.equal(created.content, '你是一位编辑');
+  assert.equal(state.promptTemplates.length, 1);
+
+  const updated = savePromptTemplate(state, { id: created.id, name: '写作助手', content: '改过的正文' });
+  assert.equal(updated.id, created.id);
+  assert.equal(updated.createdAt, created.createdAt);
+  assert.equal(updated.updatedAt >= created.createdAt, true);
+  assert.equal(state.promptTemplates.length, 1);
+  assert.equal(updated.content, '改过的正文');
+
+  assert.equal(savePromptTemplate(state, { name: '   ', content: 'x' }), null);
+  assert.equal(state.promptTemplates.length, 1);
+  assert.equal(deletePromptTemplate(state, created.id), true);
+  assert.equal(deletePromptTemplate(state, created.id), false);
+  assert.equal(findPromptTemplate(state, created.id), null);
+});
+
+test('模板正文超过上限时截断', () => {
+  const state = defaultState();
+  const t = savePromptTemplate(state, { name: '长文本', content: 'x'.repeat(MAX_PROMPT_CHARS + 50) });
+  assert.equal(t.content.length, MAX_PROMPT_CHARS);
+});
+
+test('归一化：损坏的模板被丢弃、模板名过长被截断', () => {
+  const st = fakeStorage();
+  st.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      promptTemplates: [
+        { id: 't1', name: '  正常  ', content: 'ok', createdAt: 1, updatedAt: 2 },
+        { id: '', name: 'no-id', content: 'x' },
+        { id: 't2', name: '   ', content: 'x' },
+        { id: 't3', name: 'n'.repeat(80), content: 123 },
+        'garbage',
+      ],
+    })
+  );
+  const templates = loadState(st).promptTemplates;
+  assert.equal(templates.length, 2);
+  assert.equal(templates[0].name, '正常');
+  assert.equal(templates[1].name.length, 60);
+  assert.equal(templates[1].content, '123');
+});
+
+test('会话系统提示：选定时复制模板正文做快照', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const t = savePromptTemplate(state, { name: '写作助手', content: '你是一位编辑' });
+  assert.equal(systemPromptText(s), '');
+
+  const snap = setSessionSystemPrompt(state, s.id, t);
+  assert.deepEqual(snap, { templateId: t.id, name: '写作助手', text: '你是一位编辑' });
+  assert.equal(systemPromptText(s), '你是一位编辑');
+
+  // 模板改动或删除都不影响已有会话（快照语义）
+  savePromptTemplate(state, { id: t.id, name: '写作助手', content: '全新正文' });
+  deletePromptTemplate(state, t.id);
+  assert.equal(systemPromptText(s), '你是一位编辑');
+  assert.equal(s.systemPrompt.templateId, t.id);
+  assert.equal(findPromptTemplate(state, t.id), null);
+
+  // 清空
+  assert.equal(setSessionSystemPrompt(state, s.id, null), null);
+  assert.equal(systemPromptText(s), '');
+});
+
+test('会话系统提示：空正文模板不会被写入，且随状态持久化', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const blank = savePromptTemplate(state, { name: '空模板', content: '' });
+  assert.equal(setSessionSystemPrompt(state, s.id, blank), null);
+  assert.equal(s.systemPrompt, null);
+
+  const t = savePromptTemplate(state, { name: 'A', content: '正文' });
+  setSessionSystemPrompt(state, s.id, t);
+  const st = fakeStorage();
+  saveState(st, state);
+  const loaded = loadState(st);
+  assert.deepEqual(loaded.sessions[0].systemPrompt, { templateId: t.id, name: 'A', text: '正文' });
+  assert.equal(systemPromptText(loaded.sessions[0]), '正文');
+});
+
+test('回复记录当轮系统提示，归一化后随状态保留', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const msg = addMessage(state, s.id, { role: 'assistant', content: [{ type: 'text', text: 'ok' }] });
+  updateMessage(state, s.id, msg.id, { systemPrompt: { name: '写作助手', text: '你是一位编辑' } });
+
+  const st = fakeStorage();
+  saveState(st, state);
+  assert.deepEqual(loadState(st).sessions[0].messages[0].systemPrompt, { name: '写作助手', text: '你是一位编辑' });
+
+  // 只有正文、没有名字的旧数据也接受
+  st.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      sessions: [
+        {
+          id: 's1',
+          title: 't',
+          messages: [{ id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'a' }], systemPrompt: '朴素文本' }],
+        },
+      ],
+    })
+  );
+  assert.deepEqual(loadState(st).sessions[0].messages[0].systemPrompt, { name: '', text: '朴素文本' });
+
+  // 空白或损坏的提示记录被丢弃
+  st.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      sessions: [
+        {
+          id: 's1',
+          title: 't',
+          messages: [
+            { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'a' }], systemPrompt: { text: '   ' } },
+            { id: 'm2', role: 'assistant', content: [{ type: 'text', text: 'b' }], systemPrompt: 42 },
+          ],
+        },
+      ],
+    })
+  );
+  const msgs = loadState(st).sessions[0].messages;
+  assert.equal(msgs[0].systemPrompt, undefined);
+  assert.equal(msgs[1].systemPrompt, undefined);
+});
+
+test('resetMessage 同时清除系统的提示记录', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const m = addMessage(state, s.id, { role: 'assistant', content: [{ type: 'text', text: '错' }], error: true });
+  updateMessage(state, s.id, m.id, { systemPrompt: { name: 'A', text: 'x' } });
+  resetMessage(state, s.id, m.id);
+  assert.equal(m.systemPrompt, undefined);
 });
 
 test('groupMessages 把同一批次的回复合并为一组', () => {

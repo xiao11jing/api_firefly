@@ -51,6 +51,13 @@ if (!health || health.version !== MOCK_VERSION) {
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+
+/** 直接读取本地状态，便于断言持久化结果（例如系统提示快照） */
+const readState = () => page.evaluate(() => JSON.parse(localStorage.getItem('ai-multi-chat-v1')));
+const activeSessionState = async () => {
+  const s = await readState();
+  return s.sessions.find((x) => x.id === s.activeSessionId) || null;
+};
 page.on('console', (m) => {
   if (m.type() !== 'error') return;
   const loc = (m.location && m.location().url) || '';
@@ -345,6 +352,105 @@ try {
   check('估算值不再等于接口固定值', !estFoot.includes('提示 42'), estFoot);
   check('估算值随内容量变化', /输出 ≈\d{2,}/.test(estFoot), estFoot);
   await page.screenshot({ path: join(OUT, '09-usage-estimate.png') });
+
+  // ---------- 7c. 系统提示模板 ----------
+  const PROMPT_V1 = '你是一位严谨的中文编辑，回答先给结论再给理由。';
+  const PROMPT_V2 = '你是一位代码审查者，只指出问题，不复述代码。';
+
+  await page.click('#btn-pill-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-prompt');
+  check('左侧导航切到提示词面板', await page.locator('#panel-prompt').isVisible());
+  check('设置导航共三项且垂直排列', (await page.locator('.settings-nav-item').count()) === 3);
+  check('模板列表初始为空', (await page.locator('#template-list .provider-item').count()) === 0);
+  const navBox = await page.locator('.settings-nav').boundingBox();
+  const panelBox = await page.locator('.settings-panels').boundingBox();
+  check(
+    '设置面板为左右布局',
+    navBox.x + navBox.width <= panelBox.x + 1,
+    `nav右缘=${Math.round(navBox.x + navBox.width)} panels左缘=${Math.round(panelBox.x)}`
+  );
+
+  await page.fill('#tf-name', '写作助手');
+  await page.fill('#tf-content', PROMPT_V1);
+  await page.getByRole('button', { name: '保存' }).click();
+  check('新建模板出现在列表', (await page.locator('#template-list .provider-item').count()) === 1);
+  check('模板列表显示正文字数', (await page.locator('#template-list .pi-sub').textContent()).includes('字'));
+  await page.screenshot({ path: join(OUT, '10-settings-prompt.png') });
+  await page.click('#btn-close-settings');
+
+  // 在会话里选定模板
+  await page.click('#btn-pill-prompt');
+  await page.locator('#prompt-menu:not(.hidden)').waitFor();
+  await page.waitForTimeout(250); // 等入场动画结束再断言/截图
+  check('提示菜单含模板与不使用', (await page.locator('#prompt-menu .menu-item').count()) === 2);
+  check('提示菜单已展开', await page.locator('#prompt-menu').isVisible());
+  await page.screenshot({ path: join(OUT, '10b-prompt-menu.png') });
+  await page.locator('#prompt-menu .menu-item', { hasText: '写作助手' }).click();
+  check('选定后胶囊出现标记', await page.locator('#prompt-flag').isVisible());
+  check('选定后入口进入激活态', (await page.locator('#btn-pill-prompt.has-value').count()) === 1);
+
+  await page.fill('#input', '用一句话说明系统提示是否生效');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
+  const sysReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  check(
+    '报文首条为 system 消息',
+    sysReq.messages[0].role === 'system' && sysReq.messages[0].content === PROMPT_V1,
+    JSON.stringify(sysReq.messages[0]).slice(0, 80)
+  );
+  check('system 之后紧跟用户消息', sysReq.messages[1].role === 'user');
+
+  const afterSend = await activeSessionState();
+  check('系统提示不落进会话消息列表', afterSend.messages.every((m) => m.role !== 'system'), afterSend.messages.map((m) => m.role).join(','));
+  const lastReply = [...afterSend.messages].reverse().find((m) => m.role === 'assistant');
+  check(
+    '回复记录当轮系统提示',
+    lastReply.systemPrompt && lastReply.systemPrompt.name === '写作助手' && lastReply.systemPrompt.text === PROMPT_V1,
+    JSON.stringify(lastReply.systemPrompt)
+  );
+
+  // 改模板正文：会话仍用旧快照，需显式重新套用
+  await page.click('#btn-pill-settings');
+  await page.click('#tab-prompt');
+  await page.locator('#template-list .provider-item').first().click();
+  await page.fill('#tf-content', PROMPT_V2);
+  await page.getByRole('button', { name: '保存' }).click();
+  await page.click('#btn-close-settings');
+  check('模板改动后会话仍用旧快照', (await activeSessionState()).systemPrompt.text === PROMPT_V1);
+
+  await page.click('#btn-pill-prompt');
+  await page.locator('#prompt-menu:not(.hidden)').waitFor();
+  await page.waitForTimeout(250);
+  check('菜单提示模板已更新', await page.locator('.prompt-menu-note').isVisible());
+  await page.screenshot({ path: join(OUT, '10c-prompt-updated.png') });
+  await page.locator('.prompt-menu-note').click();
+  check('重新套用后快照换成新正文', (await activeSessionState()).systemPrompt.text === PROMPT_V2);
+
+  // 取消系统提示：报文里不应再出现 system
+  await page.click('#btn-pill-prompt');
+  await page.locator('#prompt-menu:not(.hidden)').waitFor();
+  await page.locator('#prompt-menu .menu-item', { hasText: '不使用' }).click();
+  check('取消后标记消失', await page.locator('#prompt-flag').isHidden());
+  check('取消后快照被清空', (await activeSessionState()).systemPrompt === null);
+
+  await page.fill('#input', '取消提示后再来一次');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
+  const noSysReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  check(
+    '取消后报文不再带 system',
+    noSysReq.messages.every((m) => m.role !== 'system'),
+    noSysReq.messages.map((m) => m.role).join(',')
+  );
+
+  // 导出应写出当轮系统提示，并对未使用提示的轮次如实标注
+  const [promptDownload] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export')]);
+  const promptExportPath = join(OUT, 'exported-prompt.md');
+  await promptDownload.saveAs(promptExportPath);
+  const promptMd = readFileSync(promptExportPath, 'utf8');
+  check('导出在回复标题下写出系统提示', /\*\*系统提示（写作助手）\*\*/.test(promptMd) && promptMd.includes(PROMPT_V1));
+  check('导出标注未使用提示的轮次', promptMd.includes('> 本轮未使用系统提示'));
 
   // ---------- 8. 错误处理（bad key → 401） ----------
   await page.click('#btn-pill-settings');

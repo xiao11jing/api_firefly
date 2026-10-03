@@ -101,6 +101,13 @@
               <div class="model-menu-list" id="model-menu-list"></div>
             </div>
             <span class="pill-divider" aria-hidden="true"></span>
+            <button class="pill-action" id="btn-pill-prompt" type="button" title="系统提示（本会话）" aria-label="系统提示">
+              <svg viewBox="0 0 16 16" width="15" height="15"><path d="M3 3.5h10v7.2H7.6L4.8 13v-2.3H3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.8 6.2h4.4M5.8 8.2h2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+              <span class="pill-flag hidden" id="prompt-flag" aria-hidden="true"></span>
+            </button>
+            <div class="prompt-menu model-menu hidden" id="prompt-menu" role="menu" aria-label="系统提示模板">
+              <div class="model-menu-list" id="prompt-menu-list"></div>
+            </div>
             <button class="pill-action" id="btn-pill-settings" type="button" title="API 服务设置" aria-label="API 服务设置">
               <svg viewBox="0 0 16 16" width="15" height="15"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13.3 9.6a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.66 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.66h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.66 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.66h-.06a1.1 1.1 0 0 0-1 .67Z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
             </button>
@@ -128,92 +135,134 @@
         </button>
       </div>
 
-      <div class="settings-tabs" role="tablist" aria-label="设置分类">
-        <button class="settings-tab" id="tab-appearance" type="button" data-panel="appearance" role="tab" aria-selected="true" aria-controls="panel-appearance">外观</button>
-        <button class="settings-tab" id="tab-api" type="button" data-panel="api" role="tab" aria-selected="false" aria-controls="panel-api">API 服务</button>
-      </div>
+      <div class="settings-body">
+        <nav class="settings-nav" role="tablist" aria-label="设置分类" aria-orientation="vertical">
+          <button class="settings-nav-item" id="tab-appearance" type="button" data-panel="appearance" role="tab" aria-selected="true" aria-controls="panel-appearance">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M8 3.2a4.8 4.8 0 1 0 0 9.6c.9 0 1.4-.6 1.4-1.3 0-.5-.3-.8-.3-1.3 0-.6.5-1 1.1-1h1.1c1.1 0 1.7-.7 1.7-1.7A5.7 5.7 0 0 0 8 3.2Z" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="6" cy="7" r=".85" fill="currentColor"/><circle cx="8.7" cy="5.7" r=".85" fill="currentColor"/><circle cx="5.5" cy="9.9" r=".85" fill="currentColor"/></svg>
+            <span>外观</span>
+          </button>
+          <button class="settings-nav-item" id="tab-api" type="button" data-panel="api" role="tab" aria-selected="false" aria-controls="panel-api">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M5.6 2.5v3.2M10.4 2.5v3.2M4 5.7h8v1.9a4 4 0 0 1-8 0V5.7ZM8 11.6v2" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+            <span>API 服务</span>
+          </button>
+          <button class="settings-nav-item" id="tab-prompt" type="button" data-panel="prompt" role="tab" aria-selected="false" aria-controls="panel-prompt">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 3.5h10v7.2H7.6L4.8 13v-2.3H3z" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linejoin="round"/><path d="M5.8 6.2h4.4M5.8 8.2h2.9" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>
+            <span>提示词</span>
+          </button>
+        </nav>
 
-      <div class="modal-body">
-        <section class="settings-panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
-          <h3 class="panel-title">界面主题</h3>
-          <p class="panel-desc">选择聊天界面的配色，设置保存在本地浏览器，刷新后保持。</p>
-          <div class="theme-options" id="theme-options">
-            <button class="theme-option" type="button" data-theme-value="light" aria-pressed="false">
-              <span class="theme-thumb" data-thumb="light" aria-hidden="true">
-                <span class="tt-side"></span>
-                <span class="tt-body">
-                  <span class="tt-line"></span>
-                  <span class="tt-line tt-short"></span>
-                  <span class="tt-pill"></span>
+        <div class="settings-panels">
+          <section class="settings-panel" id="panel-appearance" role="tabpanel" aria-labelledby="tab-appearance">
+            <h3 class="panel-title">界面主题</h3>
+            <p class="panel-desc">选择聊天界面的配色，设置保存在本地浏览器，刷新后保持。</p>
+            <div class="theme-options" id="theme-options">
+              <button class="theme-option" type="button" data-theme-value="light" aria-pressed="false">
+                <span class="theme-thumb" data-thumb="light" aria-hidden="true">
+                  <span class="tt-side"></span>
+                  <span class="tt-body">
+                    <span class="tt-line"></span>
+                    <span class="tt-line tt-short"></span>
+                    <span class="tt-pill"></span>
+                  </span>
                 </span>
-              </span>
-              <span class="theme-name">明亮</span>
-              <span class="theme-check" aria-hidden="true">
-                <svg viewBox="0 0 14 14" width="13" height="13"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
-            </button>
-            <button class="theme-option" type="button" data-theme-value="dark" aria-pressed="false">
-              <span class="theme-thumb" data-thumb="dark" aria-hidden="true">
-                <span class="tt-side"></span>
-                <span class="tt-body">
-                  <span class="tt-line"></span>
-                  <span class="tt-line tt-short"></span>
-                  <span class="tt-pill"></span>
+                <span class="theme-name">明亮</span>
+                <span class="theme-check" aria-hidden="true">
+                  <svg viewBox="0 0 14 14" width="13" height="13"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
                 </span>
-              </span>
-              <span class="theme-name">暗黑</span>
-              <span class="theme-check" aria-hidden="true">
-                <svg viewBox="0 0 14 14" width="13" height="13"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
-              </span>
-            </button>
-          </div>
-        </section>
-
-        <section class="settings-panel hidden" id="panel-api" role="tabpanel" aria-labelledby="tab-api">
-          <div class="settings-grid">
-            <div class="settings-list">
-              <button class="ghost-btn block" id="btn-add-provider">＋ 新增服务</button>
-              <div id="provider-list" class="provider-list"></div>
+              </button>
+              <button class="theme-option" type="button" data-theme-value="dark" aria-pressed="false">
+                <span class="theme-thumb" data-thumb="dark" aria-hidden="true">
+                  <span class="tt-side"></span>
+                  <span class="tt-body">
+                    <span class="tt-line"></span>
+                    <span class="tt-line tt-short"></span>
+                    <span class="tt-pill"></span>
+                  </span>
+                </span>
+                <span class="theme-name">暗黑</span>
+                <span class="theme-check" aria-hidden="true">
+                  <svg viewBox="0 0 14 14" width="13" height="13"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </span>
+              </button>
             </div>
-            <form class="settings-form" id="provider-form" autocomplete="off">
-              <input type="hidden" id="pf-id">
-              <label class="field"><span>名称</span>
-                <input id="pf-name" placeholder="如 OpenAI / DeepSeek" required>
-              </label>
-              <label class="field"><span>Base URL</span>
-                <input id="pf-baseUrl" placeholder="https://api.openai.com/v1" required>
-              </label>
-              <label class="field"><span>API Key</span>
-                <input id="pf-apiKey" type="password" placeholder="sk-..." autocomplete="new-password">
-              </label>
-              <label class="field"><span>模型列表（每行一个）</span>
-                <textarea id="pf-models" rows="3" placeholder="gpt-4o-mini&#10;gpt-4o"></textarea>
-              </label>
-              <label class="field"><span>代理地址（可选）</span>
-                <input id="pf-proxyUrl" placeholder="如 http://127.0.0.1:8787/proxy/">
-              </label>
-              <div class="field-row">
-                <label class="field"><span>输入价格（¥/百万 token，可选）</span>
-                  <input id="pf-priceInput" inputmode="decimal" placeholder="如 2">
-                </label>
-                <label class="field"><span>输出价格（¥/百万 token，可选）</span>
-                  <input id="pf-priceOutput" inputmode="decimal" placeholder="如 8">
-                </label>
+          </section>
+
+          <section class="settings-panel hidden" id="panel-api" role="tabpanel" aria-labelledby="tab-api">
+            <h3 class="panel-title">API 服务</h3>
+            <p class="panel-desc">管理模型服务商，密钥只保存在本地浏览器，不会上传。</p>
+            <div class="settings-grid">
+              <div class="settings-list">
+                <button class="ghost-btn block" id="btn-add-provider">＋ 新增服务</button>
+                <div id="provider-list" class="provider-list"></div>
               </div>
-              <p class="form-hint">
-                兼容 OpenAI Chat Completions 格式。代理地址用于解决浏览器跨域：请求地址 = 代理地址 + Base URL + /chat/completions；
-                若代理本身即为兼容端点，可直接把 Base URL 指向它。浏览器直连仅建议本地自用。
-              </p>
-              <p class="form-hint">
-                单价用于估算费用（人民币）：留空则套用内置参考价（可能已过时，仅供估算）；填写后该服务全部模型按此价计算。
-              </p>
-              <div class="form-actions">
-                <button type="submit" class="primary-btn">保存</button>
-                <button type="button" class="danger-btn hidden" id="btn-del-provider">删除此服务</button>
+              <form class="settings-form" id="provider-form" autocomplete="off">
+                <input type="hidden" id="pf-id">
+                <label class="field"><span>名称</span>
+                  <input id="pf-name" placeholder="如 OpenAI / DeepSeek" required>
+                </label>
+                <label class="field"><span>Base URL</span>
+                  <input id="pf-baseUrl" placeholder="https://api.openai.com/v1" required>
+                </label>
+                <label class="field"><span>API Key</span>
+                  <input id="pf-apiKey" type="password" placeholder="sk-..." autocomplete="new-password">
+                </label>
+                <label class="field"><span>模型列表（每行一个）</span>
+                  <textarea id="pf-models" rows="3" placeholder="gpt-4o-mini&#10;gpt-4o"></textarea>
+                </label>
+                <label class="field"><span>代理地址（可选）</span>
+                  <input id="pf-proxyUrl" placeholder="如 http://127.0.0.1:8787/proxy/">
+                </label>
+                <div class="field-row">
+                  <label class="field"><span>输入价格（¥/百万 token，可选）</span>
+                    <input id="pf-priceInput" inputmode="decimal" placeholder="如 2">
+                  </label>
+                  <label class="field"><span>输出价格（¥/百万 token，可选）</span>
+                    <input id="pf-priceOutput" inputmode="decimal" placeholder="如 8">
+                  </label>
+                </div>
+                <p class="form-hint">
+                  兼容 OpenAI Chat Completions 格式。代理地址用于解决浏览器跨域：请求地址 = 代理地址 + Base URL + /chat/completions；
+                  若代理本身即为兼容端点，可直接把 Base URL 指向它。浏览器直连仅建议本地自用。
+                </p>
+                <p class="form-hint">
+                  单价用于估算费用（人民币）：留空则套用内置参考价（可能已过时，仅供估算）；填写后该服务全部模型按此价计算。
+                </p>
+                <div class="form-actions">
+                  <button type="submit" class="primary-btn">保存</button>
+                  <button type="button" class="danger-btn hidden" id="btn-del-provider">删除此服务</button>
+                </div>
+              </form>
+            </div>
+          </section>
+
+          <section class="settings-panel hidden" id="panel-prompt" role="tabpanel" aria-labelledby="tab-prompt">
+            <h3 class="panel-title">提示词模板</h3>
+            <p class="panel-desc">可复用的系统提示；在会话里选定后作为 system 消息放在对话最前面发送。</p>
+            <div class="settings-grid">
+              <div class="settings-list">
+                <button class="ghost-btn block" id="btn-add-template">＋ 新建模板</button>
+                <div id="template-list" class="provider-list"></div>
               </div>
-            </form>
-          </div>
-        </section>
+              <form class="settings-form" id="template-form" autocomplete="off">
+                <input type="hidden" id="tf-id">
+                <label class="field"><span>模板名称</span>
+                  <input id="tf-name" placeholder="如 写作助手 / 代码审查" required>
+                </label>
+                <label class="field"><span>系统提示正文</span>
+                  <textarea id="tf-content" rows="12" placeholder="在会话里选定该模板后，这段正文会作为 system 消息放在对话最前面发送"></textarea>
+                </label>
+                <p class="form-hint">
+                  会话里选定模板时会复制一份正文快照，之后改动或删除模板都不会影响已有会话；每条回复也会记录当轮使用的提示，导出 Markdown 时一并写出。
+                  正文留空则等同于让该会话不带系统提示。
+                </p>
+                <div class="form-actions">
+                  <button type="submit" class="primary-btn">保存</button>
+                  <button type="button" class="danger-btn hidden" id="btn-del-template">删除此模板</button>
+                </div>
+              </form>
+            </div>
+          </section>
+        </div>
       </div>
     </div>
   </div>

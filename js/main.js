@@ -616,6 +616,7 @@ function renderSessionTools(session) {
   const hasMessages = !!(session && session.messages.length);
   $('#btn-search').disabled = !hasMessages;
   $('#btn-export').disabled = !hasMessages;
+  renderPromptFlag();
 }
 
 /** 同一批对比回复左右分栏展示 */
@@ -707,9 +708,10 @@ function hasContent(msg) {
  * 组装某个分支要发出的历史消息。
  * 对比模式下每个分支只看得到「用户消息 + 自己的历史回复」，
  * 避免互相参考对方答案而失去可比性；非对比模式则使用完整历史。
+ * 会话选定的系统提示以 role=system 前置，且不进入 session.messages。
  */
 function buildApiMessages(session, target, comparing) {
-  return session.messages
+  const history = session.messages
     .filter((m) => {
       if (m.error || !hasContent(m)) return false;
       if (!comparing) return true;
@@ -718,6 +720,9 @@ function buildApiMessages(session, target, comparing) {
       return m.model.providerId === target.provider.id && m.model.model === target.model;
     })
     .map((m) => ({ role: m.role, content: m.content }));
+
+  const systemPrompt = store.systemPromptText(session);
+  return systemPrompt ? [{ role: 'system', content: systemPrompt }, ...history] : history;
 }
 
 /** 为每个目标创建占位回复（对比模式下共享同一 batchId，便于分栏渲染） */
@@ -800,6 +805,7 @@ async function runBranch({ session, spec, controller, started }) {
   } else if (!full.trim()) {
     store.removeMessage(state, s.id, msgId); // 无任何产出，避免留下空气泡
   } else {
+    const snapshot = s.systemPrompt;
     store.updateMessage(state, s.id, msgId, {
       content: [{ type: 'text', text: full }],
       ms,
@@ -807,6 +813,7 @@ async function runBranch({ session, spec, controller, started }) {
         promptTokens: promptEstimate,
         completionTokens: estimateTokens(full),
       }),
+      ...(snapshot ? { systemPrompt: { name: snapshot.name, text: snapshot.text } } : {}),
     });
   }
   persist();
@@ -887,6 +894,238 @@ async function retryFrom(errorMsgId) {
 
 function stop() {
   for (const c of controllers) c.abort();
+}
+
+// ---------- 系统提示（提示词模板） ----------
+
+/** 会话当前生效的系统提示快照 */
+function sessionSystemPrompt() {
+  const session = store.getActiveSession(state);
+  return (session && session.systemPrompt) || null;
+}
+
+function renderPromptFlag() {
+  const snapshot = sessionSystemPrompt();
+  const btn = $('#btn-pill-prompt');
+  $('#prompt-flag').classList.toggle('hidden', !snapshot);
+  btn.classList.toggle('has-value', !!snapshot);
+  btn.title = snapshot
+    ? `系统提示：${snapshot.name || '未命名模板'}（${snapshot.text.length} 字）`
+    : '系统提示（本会话）';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function closePromptMenu() {
+  $('#prompt-menu').classList.add('hidden');
+  $('#btn-pill-prompt').setAttribute('aria-expanded', 'false');
+}
+
+function renderPromptMenu() {
+  const list = $('#prompt-menu-list');
+  list.innerHTML = '';
+  const current = sessionSystemPrompt();
+
+  const head = document.createElement('div');
+  head.className = 'menu-group';
+  head.textContent = '系统提示模板';
+  list.appendChild(head);
+
+  if (!state.promptTemplates.length) {
+    const empty = document.createElement('p');
+    empty.className = 'prompt-menu-empty';
+    empty.textContent = '还没有模板。在设置 → 提示词里新建后即可在这里选定。';
+    list.appendChild(empty);
+  }
+
+  const options = [
+    { id: null, name: '不使用', sub: '该会话不发送 system 消息' },
+    ...state.promptTemplates.map((t) => ({
+      id: t.id,
+      name: t.name,
+      sub: t.content ? `${t.content.length} 字` : '正文为空',
+    })),
+  ];
+
+  for (const opt of options) {
+    const active = (current ? current.templateId : null) === opt.id;
+    const item = document.createElement('button');
+    item.type = 'button';
+    item.className = 'menu-item' + (active ? ' active' : '');
+    item.setAttribute('role', 'menuitemradio');
+    item.setAttribute('aria-checked', String(active));
+
+    const text = document.createElement('span');
+    text.className = 'menu-text';
+    const name = document.createElement('span');
+    name.className = 'menu-name';
+    name.textContent = opt.name;
+    const sub = document.createElement('span');
+    sub.className = 'menu-sub';
+    sub.textContent = opt.sub;
+    text.append(name, sub);
+    item.appendChild(text);
+
+    if (active) {
+      const check = document.createElement('span');
+      check.className = 'menu-check';
+      check.innerHTML = CHECK_SVG;
+      item.appendChild(check);
+    }
+    item.addEventListener('click', (e) => {
+      e.stopPropagation();
+      applySystemPrompt(opt.id);
+    });
+    list.appendChild(item);
+  }
+
+  // 快照语义下模板正文可能已改动，明确给出「重新套用」入口
+  if (current && current.templateId) {
+    const t = store.findPromptTemplate(state, current.templateId);
+    if (t && t.content.trim() && t.content.trim() !== current.text) {
+      const reapply = document.createElement('button');
+      reapply.type = 'button';
+      reapply.className = 'prompt-menu-note';
+      reapply.textContent = '模板已更新，点击重新套用最新正文';
+      reapply.addEventListener('click', (e) => {
+        e.stopPropagation();
+        applySystemPrompt(current.templateId);
+      });
+      list.appendChild(reapply);
+    }
+  }
+
+  const foot = document.createElement('button');
+  foot.type = 'button';
+  foot.className = 'model-menu-foot';
+  foot.innerHTML = `${GEAR_SVG}<span>管理提示词模板</span>`;
+  foot.addEventListener('click', (e) => {
+    e.stopPropagation();
+    closePromptMenu();
+    openSettings('prompt');
+  });
+  list.appendChild(foot);
+}
+
+function togglePromptMenu() {
+  const menu = $('#prompt-menu');
+  const willOpen = menu.classList.contains('hidden');
+  closeModelMenu();
+  if (willOpen) renderPromptMenu();
+  menu.classList.toggle('hidden', !willOpen);
+  $('#btn-pill-prompt').setAttribute('aria-expanded', String(willOpen));
+}
+
+/** 把模板正文快照进当前会话；templateId 为 null 表示不使用 */
+function applySystemPrompt(templateId) {
+  const session = store.getActiveSession(state);
+  if (!session) {
+    toast('请先创建会话', 'error');
+    return;
+  }
+  const template = templateId ? store.findPromptTemplate(state, templateId) : null;
+  if (templateId && !template) {
+    toast('模板不存在', 'error');
+    return;
+  }
+  const applied = store.setSessionSystemPrompt(state, session.id, template);
+  persist();
+  renderPromptFlag();
+  renderPromptMenu();
+  closePromptMenu();
+  if (!template) {
+    toast('已取消系统提示');
+  } else if (!applied) {
+    toast(`模板「${template.name}」正文为空，等同于不使用`, 'error');
+  } else {
+    toast(`已应用系统提示：${template.name}`);
+  }
+}
+
+// ---------- 提示词模板（设置页） ----------
+
+let editingTemplateId = null;
+
+function renderTemplateList() {
+  const box = $('#template-list');
+  box.innerHTML = '';
+  if (!state.promptTemplates.length) {
+    const tip = document.createElement('p');
+    tip.className = 'form-hint';
+    tip.textContent = '暂无模板，点击上方按钮新建。';
+    box.appendChild(tip);
+    return;
+  }
+  for (const t of state.promptTemplates) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'provider-item' + (t.id === editingTemplateId ? ' active' : '');
+    const name = document.createElement('span');
+    name.textContent = t.name;
+    const sub = document.createElement('span');
+    sub.className = 'pi-sub';
+    sub.textContent = t.content ? `${t.content.length} 字` : '正文为空';
+    btn.append(name, sub);
+    btn.addEventListener('click', () => fillTemplateForm(t.id));
+    box.appendChild(btn);
+  }
+}
+
+function resetTemplateForm() {
+  editingTemplateId = null;
+  $('#tf-id').value = '';
+  $('#tf-name').value = '';
+  $('#tf-content').value = '';
+  $('#btn-del-template').classList.add('hidden');
+  renderTemplateList();
+  $('#tf-name').focus();
+}
+
+function fillTemplateForm(id) {
+  const t = store.findPromptTemplate(state, id);
+  if (!t) return;
+  editingTemplateId = id;
+  $('#tf-id').value = t.id;
+  $('#tf-name').value = t.name;
+  $('#tf-content').value = t.content;
+  $('#btn-del-template').classList.remove('hidden');
+  renderTemplateList();
+}
+
+function saveTemplateForm(e) {
+  e.preventDefault();
+  const id = $('#tf-id').value || '';
+  const name = $('#tf-name').value.trim();
+  const content = $('#tf-content').value;
+  if (!name) {
+    toast('模板名称不能为空', 'error');
+    return;
+  }
+  if (content.length > store.MAX_PROMPT_CHARS) {
+    toast(`正文最多 ${store.MAX_PROMPT_CHARS} 字符`, 'error');
+    return;
+  }
+  const saved = store.savePromptTemplate(state, { id: id || undefined, name, content });
+  if (!saved) {
+    toast('保存失败', 'error');
+    return;
+  }
+  persist();
+  editingTemplateId = saved.id;
+  fillTemplateForm(saved.id);
+  renderPromptFlag();
+  toast('已保存模板');
+}
+
+function deleteTemplateForm() {
+  const id = $('#tf-id').value;
+  const t = id ? store.findPromptTemplate(state, id) : null;
+  if (!t) return;
+  if (!confirm(`删除模板「${t.name}」？已选定它的会话仍保留当时的正文快照。`)) return;
+  store.deletePromptTemplate(state, id);
+  persist();
+  resetTemplateForm();
+  renderPromptFlag();
+  toast('已删除模板');
 }
 
 // ---------- 会话导出 ----------
@@ -1267,21 +1506,25 @@ function chooseTheme(theme) {
   toast(`已切换到${THEME_LABELS[applied] || applied}主题`);
 }
 
-/** 切换设置面板：'appearance' | 'api' */
+/** 切换设置面板：'appearance' | 'api' | 'prompt' */
+const SETTINGS_PANELS = ['appearance', 'api', 'prompt'];
+
 function switchSettingsPanel(panel) {
-  const target = panel === 'api' ? 'api' : 'appearance';
-  for (const tab of document.querySelectorAll('.settings-tab')) {
-    const active = tab.dataset.panel === target;
-    tab.classList.toggle('active', active);
-    tab.setAttribute('aria-selected', String(active));
+  const target = SETTINGS_PANELS.includes(panel) ? panel : 'appearance';
+  for (const item of document.querySelectorAll('.settings-nav-item')) {
+    const active = item.dataset.panel === target;
+    item.classList.toggle('active', active);
+    item.setAttribute('aria-selected', String(active));
   }
-  $('#panel-appearance').classList.toggle('hidden', target !== 'appearance');
-  $('#panel-api').classList.toggle('hidden', target !== 'api');
+  for (const name of SETTINGS_PANELS) {
+    $(`#panel-${name}`).classList.toggle('hidden', name !== target);
+  }
 }
 
 function openSettings(panel = 'appearance') {
   renderThemeOptions();
   renderProviderList();
+  renderTemplateList();
   switchSettingsPanel(panel);
   $('#settings-mask').classList.remove('hidden');
 }
@@ -1456,6 +1699,13 @@ function bind() {
     openSettings('api');
   });
   $('#btn-compare-toggle').addEventListener('click', toggleCompare);
+  $('#btn-pill-prompt').addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePromptMenu();
+  });
+  $('#btn-add-template').addEventListener('click', resetTemplateForm);
+  $('#template-form').addEventListener('submit', saveTemplateForm);
+  $('#btn-del-template').addEventListener('click', deleteTemplateForm);
   $('#btn-export').addEventListener('click', exportSession);
   $('#btn-search').addEventListener('click', openSearch);
   $('#btn-search-close').addEventListener('click', closeSearch);
@@ -1484,7 +1734,10 @@ function bind() {
     toggleModelMenu();
   });
   document.addEventListener('click', (e) => {
-    if (!$('#model-pill').contains(e.target)) closeModelMenu();
+    if (!$('#model-pill').contains(e.target)) {
+      closeModelMenu();
+      closePromptMenu();
+    }
   });
   $('#btn-close-settings').addEventListener('click', closeSettings);
   $('#settings-mask').addEventListener('click', (e) => {
@@ -1500,6 +1753,10 @@ function bind() {
       return;
     }
     if (e.key !== 'Escape') return;
+    if (!$('#prompt-menu').classList.contains('hidden')) {
+      closePromptMenu();
+      return;
+    }
     if (!$('#model-menu').classList.contains('hidden')) {
       closeModelMenu();
       return;
@@ -1515,8 +1772,8 @@ function bind() {
   $('#provider-form').addEventListener('submit', saveProviderForm);
   $('#btn-del-provider').addEventListener('click', deleteProviderForm);
 
-  for (const tab of document.querySelectorAll('.settings-tab')) {
-    tab.addEventListener('click', () => switchSettingsPanel(tab.dataset.panel));
+  for (const item of document.querySelectorAll('.settings-nav-item')) {
+    item.addEventListener('click', () => switchSettingsPanel(item.dataset.panel));
   }
   for (const opt of document.querySelectorAll('#theme-options .theme-option')) {
     opt.addEventListener('click', () => chooseTheme(opt.dataset.themeValue));

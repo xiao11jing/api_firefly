@@ -109,6 +109,58 @@ test('sessionToMarkdown 标注估算用量与错误回复', () => {
   assert.ok(!md.includes('- 模型：'));
 });
 
+test('sessionToMarkdown 在回复标题下写明当轮系统提示', () => {
+  const md = sessionToMarkdown(
+    session([
+      { id: 'm1', role: 'user', content: [{ type: 'text', text: '写点什么' }] },
+      {
+        id: 'm2',
+        role: 'assistant',
+        content: [{ type: 'text', text: '第一版' }],
+        model: { providerId: 'p1', model: 'mock-model' },
+        systemPrompt: { name: '写作助手', text: '你是一位严谨的编辑' },
+      },
+    ]),
+    { providerName: () => 'Mock 服务' }
+  );
+  const headingIdx = md.indexOf('## AI（Mock 服务 · mock-model）');
+  const promptIdx = md.indexOf('**系统提示（写作助手）**');
+  const bodyIdx = md.indexOf('第一版');
+  assert.ok(headingIdx !== -1 && promptIdx !== -1 && bodyIdx !== -1);
+  assert.ok(headingIdx < promptIdx && promptIdx < bodyIdx, '系统提示应在标题之后、正文之前');
+  assert.match(md, /```text\n你是一位严谨的编辑\n```/);
+});
+
+test('sessionToMarkdown 对连续相同的系统提示用「同上」去重', () => {
+  const sp = { name: '写作助手', text: '你是一位严谨的编辑' };
+  const md = sessionToMarkdown(
+    session([
+      { id: 'm1', role: 'assistant', content: [{ type: 'text', text: '一' }], systemPrompt: sp },
+      { id: 'm2', role: 'assistant', content: [{ type: 'text', text: '二' }], systemPrompt: sp },
+      { id: 'm3', role: 'assistant', content: [{ type: 'text', text: '三' }], systemPrompt: sp },
+    ])
+  );
+  assert.equal(md.split('**系统提示（写作助手）**').length - 1, 1);
+  assert.equal(md.split('> 系统提示：同上').length - 1, 2);
+});
+
+test('sessionToMarkdown 在提示被改动或取消时如实标注', () => {
+  const md = sessionToMarkdown(
+    session([
+      { id: 'm1', role: 'assistant', content: [{ type: 'text', text: '一' }], systemPrompt: { name: 'A', text: '第一版' } },
+      { id: 'm2', role: 'assistant', content: [{ type: 'text', text: '二' }], systemPrompt: { name: 'A', text: '第二版' } },
+      { id: 'm3', role: 'assistant', content: [{ type: 'text', text: '三' }] },
+      { id: 'm4', role: 'assistant', content: [{ type: 'text', text: '四' }] },
+    ])
+  );
+  assert.match(md, /\*\*系统提示（A）\*\*/);
+  assert.equal(md.split('第二版').length - 1, 1);
+  assert.equal(md.split('> 本轮未使用系统提示').length - 1, 1);
+  // 一直没有提示时不写任何提示行
+  const plain = sessionToMarkdown(session([{ id: 'm1', role: 'assistant', content: [{ type: 'text', text: '一' }] }]));
+  assert.ok(!plain.includes('系统提示'));
+});
+
 test('sessionToMarkdown 跳过空的文本片段', () => {
   const md = sessionToMarkdown(session([{ id: 'm1', role: 'assistant', content: [{ type: 'text', text: '   ' }] }]));
   assert.match(md, /## AI\n/);
