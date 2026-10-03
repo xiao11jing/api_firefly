@@ -1,0 +1,11 @@
+{
+  "name": "ai-multi-chat",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "多模型 AI 对话客户端 MVP",
+  "scripts": {
+    "test": "node --test tests/",
+    "mock": "node tests/mock-server.mjs"
+  }
+}
