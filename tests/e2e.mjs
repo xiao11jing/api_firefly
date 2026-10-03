@@ -7,6 +7,7 @@ import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 const APP = process.env.APP_URL || 'http://127.0.0.1:8800';
+const MOCK = process.env.MOCK_URL || 'http://127.0.0.1:8717';
 const OUT = join(import.meta.dirname, '..', 'output', 'playwright');
 mkdirSync(OUT, { recursive: true });
 
@@ -19,13 +20,18 @@ function check(name, cond, extra = '') {
   if (!cond) failed++;
 }
 
-// 1x1 透明 PNG
-const PNG_1x1 = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
-  'base64'
-);
-const IMG_PATH = join(OUT, 'sample.png');
-writeFileSync(IMG_PATH, PNG_1x1);
+// 图片附件夹具（可见的图案，便于截图核对渲染效果）
+const IMG_PATH = join(import.meta.dirname, 'fixtures', 'image-a.png');
+const IMG_PATH_2 = join(import.meta.dirname, 'fixtures', 'image-b.png');
+
+// 文本 / JSON / PDF 附件夹具
+const MD_PATH = join(OUT, 'notes.md');
+writeFileSync(MD_PATH, '# 会议纪要\n\n第一条结论：先做多模型对话。\n', 'utf8');
+const JSON_PATH = join(OUT, 'payload.json');
+writeFileSync(JSON_PATH, JSON.stringify({ ok: true, items: [1, 2, 3] }, null, 2), 'utf8');
+const EXE_PATH = join(OUT, 'binary.exe');
+writeFileSync(EXE_PATH, 'not really an exe');
+const PDF_PATH = join(import.meta.dirname, 'fixtures', 'sample.pdf');
 
 const consoleErrors = [];
 const pageErrors = [];
@@ -45,13 +51,15 @@ try {
   // ---------- 1. 首屏：无 provider 的空状态 ----------
   await page.goto(APP, { waitUntil: 'networkidle' });
   check('首屏显示未配置提示', await page.locator('.empty-state h3').textContent() === '还没有配置 API 服务');
+  check('侧边栏左下角有设置按钮', await page.locator('#btn-sidebar-settings').isVisible());
   await page.screenshot({ path: join(OUT, '01-empty.png') });
 
   // ---------- 2. 配置 provider ----------
   await page.getByRole('button', { name: '去配置 API' }).click();
   await page.locator('#settings-mask:not(.hidden)').waitFor();
+  check('配置入口直达 API 服务面板', await page.locator('#panel-api').isVisible());
   await page.fill('#pf-name', 'Mock 服务');
-  await page.fill('#pf-baseUrl', 'http://127.0.0.1:8717/v1');
+  await page.fill('#pf-baseUrl', `${MOCK}/v1`);
   await page.fill('#pf-apiKey', 'test-key');
   await page.fill('#pf-models', 'mock-model');
   await page.getByRole('button', { name: '保存' }).click();
@@ -102,19 +110,92 @@ try {
   check('刷新后消息仍在', (await page.locator('.msg.user').count()) >= 1);
   check('刷新后 provider 仍在', (await page.locator('#model-label').textContent()).includes('mock-model'));
 
-  // ---------- 6. 新会话 + 图片附件 ----------
+  // ---------- 6. 新会话 + 多图附件 ----------
   await page.click('#btn-new-chat');
   check('新会话进入空状态', (await page.locator('.empty-state h3').textContent()) === '开始新对话');
-  await page.setInputFiles('#file-input', IMG_PATH);
-  await page.locator('#attach-preview:not(.hidden)').waitFor({ timeout: 5000 });
-  check('图片附件预览显示', true);
-  await page.fill('#input', '看看这张图');
+  await page.setInputFiles('#file-input', [IMG_PATH, IMG_PATH_2]);
+  await page.locator('#attach-bar:not(.hidden)').waitFor({ timeout: 5000 });
+  await page.waitForFunction(() => document.querySelectorAll('.attach-chip').length === 2, null, { timeout: 10000 });
+  check('两张图片各生成一个待发送项', (await page.locator('.attach-chip').count()) === 2);
+  check('附件摘要统计图片数量', (await page.locator('#attach-summary').textContent()).includes('2 张图片'));
+  check('图片项显示缩略图', (await page.locator('.attach-chip .chip-thumb').count()) === 2);
+
+  await page.click('#btn-attach-clear');
+  check('全部移除按钮清空附件栏', await page.locator('#attach-bar').isHidden());
+
+  await page.setInputFiles('#file-input', [IMG_PATH, IMG_PATH_2]);
+  await page.locator('.attach-chip').nth(1).waitFor();
+  await page.fill('#input', '看看这两张图');
   await page.press('#input', 'Enter');
   await page.waitForSelector('.msg.user .bubble-img', { timeout: 5000 });
-  check('用户消息带图上屏', true);
+  check('用户消息展示两张图', (await page.locator('.msg.user .bubble-img').count()) === 2);
   await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
   check('图片会话正常回复', (await page.locator('.msg.assistant .prose').count()) >= 1);
-  await page.screenshot({ path: join(OUT, '04-image.png') });
+  check('发送后附件栏自动收起', await page.locator('#attach-bar').isHidden());
+  await page.screenshot({ path: join(OUT, '04-multi-image.png') });
+
+  // 报文层面确认走的是 vision 数组且带两张图
+  const imgReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const imgContent = imgReq.messages[imgReq.messages.length - 1].content;
+  check(
+    '请求体含两条 image_url',
+    Array.isArray(imgContent) && imgContent.filter((c) => c.type === 'image_url').length === 2,
+    JSON.stringify(imgContent).slice(0, 120)
+  );
+
+  // ---------- 6b. 文档附件（Markdown / JSON / PDF） ----------
+  await page.click('#btn-new-chat');
+  await page.setInputFiles('#file-input', [MD_PATH, JSON_PATH]);
+  await page.locator('.attach-chip').nth(1).waitFor({ timeout: 10000 });
+  const docSubs = await page.locator('.attach-chip .chip-sub').allTextContents();
+  check('文本文档解析出字数', docSubs.every((s) => /字/.test(s)), docSubs.join(' | '));
+  check('附件摘要统计文档数量', (await page.locator('#attach-summary').textContent()).includes('2 个文档'));
+
+  await page.setInputFiles('#file-input', PDF_PATH);
+  await page.waitForFunction(
+    () => {
+      const subs = [...document.querySelectorAll('.attach-chip .chip-sub')].map((el) => el.textContent);
+      return subs.length === 3 && subs.some((s) => /页/.test(s));
+    },
+    null,
+    { timeout: 30000 }
+  );
+  const pdfSub = (await page.locator('.attach-chip .chip-sub').allTextContents())[2];
+  check('PDF 解析出页数与字数', /2 页/.test(pdfSub), pdfSub);
+
+  await page.fill('#input', '读一下这些文档');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.msg.user .doc-part', { timeout: 10000 });
+  const docNames = await page.locator('.msg.user .doc-part .doc-name').allTextContents();
+  check('气泡内列出全部文档名', docNames.join(',') === 'notes.md,payload.json,sample.pdf', docNames.join(','));
+  check('会话标题取正文而非附件名', (await page.locator('.session-item.active .s-title').textContent()) === '读一下这些文档');
+
+  await page.locator('.msg.user .doc-part').nth(0).locator('summary').click();
+  const mdText = await page.locator('.msg.user .doc-part .doc-text').nth(0).textContent();
+  check('展开可见 Markdown 提取文本', mdText.includes('会议纪要') && mdText.includes('第一条结论'), mdText.slice(0, 40));
+
+  await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
+  const docReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const docContent = docReq.messages[docReq.messages.length - 1].content;
+  check('文档文本已内嵌进 prompt', typeof docContent === 'string' && docContent.includes('【附件文档：notes.md】'), String(docContent).slice(0, 90));
+  check('PDF 文本也内嵌（含中文）', docContent.includes('MiMo Attachment Fixture') && docContent.includes('中文文档测试'));
+  check('图片未混入纯文本文档请求', !docContent.includes('image_url'));
+  await page.screenshot({ path: join(OUT, '05-documents.png') });
+
+  // ---------- 6c. 不支持的文件类型 + 附件数量上限 ----------
+  await page.click('#btn-new-chat');
+  await page.setInputFiles('#file-input', EXE_PATH);
+  await page.waitForSelector('#toast.error', { timeout: 4000 });
+  check('不支持的类型给出提示', (await page.locator('#toast').textContent()).includes('不支持的文件类型'));
+  check('被拒绝的文件不进入附件栏', await page.locator('#attach-bar').isHidden());
+
+  await page.setInputFiles('#file-input', [IMG_PATH, IMG_PATH_2, MD_PATH, JSON_PATH, PDF_PATH, EXE_PATH]);
+  await page.waitForSelector('#toast.error', { timeout: 10000 });
+  await page.waitForFunction(() => document.querySelectorAll('.attach-chip').length === 5, null, { timeout: 30000 });
+  check('附件数量上限为 5', (await page.locator('.attach-chip').count()) === 5);
+  check('达上限后提示并禁用添加按钮', await page.locator('#btn-attach').isDisabled());
+  await page.click('#btn-attach-clear');
+  check('清空后恢复可添加', !(await page.locator('#btn-attach').isDisabled()));
 
   // ---------- 7. 错误处理（bad key → 401） ----------
   await page.click('#btn-pill-settings');
@@ -134,7 +215,50 @@ try {
   // ---------- 8. 重试按钮存在且可点 ----------
   check('重试按钮可用', await page.locator('.msg-error .retry-btn').isVisible());
 
-  // ---------- 9. 控制台无异常 ----------
+  // ---------- 9. 左下角设置：外观与主题切换 ----------
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  check('侧边栏设置按钮打开外观面板', await page.locator('#panel-appearance').isVisible());
+  check('API 面板此时隐藏', await page.locator('#panel-api').isHidden());
+  check(
+    '默认选中暗黑主题',
+    (await page.locator('.theme-option[data-theme-value="dark"]').getAttribute('aria-pressed')) === 'true'
+  );
+  check('主题缩略预览已渲染', (await page.locator('.theme-thumb').count()) === 2);
+  await page.screenshot({ path: join(OUT, '06a-settings-appearance.png') });
+
+  await page.click('.theme-option[data-theme-value="light"]');
+  check('切换到明亮后根元素带 data-theme', (await page.getAttribute('html', 'data-theme')) === 'light');
+  check(
+    '明亮卡片被标记为选中',
+    (await page.locator('.theme-option[data-theme-value="light"]').getAttribute('aria-pressed')) === 'true'
+  );
+  const lightBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const lightInk = await page.evaluate(() => getComputedStyle(document.body).color);
+  check('明亮配色实际生效', lightBg === 'rgb(255, 255, 255)' && lightInk === 'rgb(26, 31, 39)', `${lightBg} / ${lightInk}`);
+  await page.click('#btn-close-settings');
+  await page.screenshot({ path: join(OUT, '06-theme-light.png') });
+
+  await page.reload({ waitUntil: 'networkidle' });
+  check('刷新后主题仍是明亮', (await page.getAttribute('html', 'data-theme')) === 'light');
+  // 切回带附件的会话，确认附件文本与图片确实随本地存储还原
+  await page.locator('.session-item', { hasText: '读一下这些文档' }).first().click();
+  await page.waitForSelector('.msg.user .doc-part', { timeout: 5000 });
+  check('刷新后文档消息仍在', (await page.locator('.msg.user .doc-part').count()) === 3);
+  await page.screenshot({ path: join(OUT, '07-theme-light-chat.png') });
+
+  await page.click('#btn-sidebar-settings');
+  await page.click('#tab-api');
+  check('标签可切到 API 服务面板', await page.locator('#panel-api').isVisible());
+  check('切面板后外观面板隐藏', await page.locator('#panel-appearance').isHidden());
+  await page.click('#tab-appearance');
+  check('标签可切回外观面板', await page.locator('#panel-appearance').isVisible());
+
+  await page.click('.theme-option[data-theme-value="dark"]');
+  check('可切回暗黑主题', (await page.getAttribute('html', 'data-theme')) === 'dark');
+  await page.click('#btn-close-settings');
+
+  // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
   const realConsoleErrors = consoleErrors.filter((e) => !e.includes('favicon'));
   check('无控制台错误', realConsoleErrors.length === 0, realConsoleErrors.join(' | '));

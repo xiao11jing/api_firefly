@@ -2,6 +2,7 @@
  * mock-server.mjs — 本地模拟 OpenAI 兼容 API，用于端到端测试
  * 启动：npm run mock  （监听 http://127.0.0.1:8717）
  * 端点：POST /v1/chat/completions（支持 stream / 非 stream / 故意报错）
+ *       GET  /last-request（返回最近一次收到的请求体，供端到端校验报文）
  */
 import http from 'node:http';
 
@@ -30,7 +31,16 @@ function sseEvent(delta, finish = null) {
 }
 
 export function createMockServer() {
+  let lastRequest = null;
+
   return http.createServer((req, res) => {
+  // 回看最近一次收到的请求体，便于端到端断言真实发出的报文
+  if (req.method === 'GET' && req.url.includes('/last-request')) {
+    res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(lastRequest));
+    return;
+  }
+
   if (req.method === 'OPTIONS') {
     res.writeHead(204, CORS);
     res.end();
@@ -54,6 +64,7 @@ export function createMockServer() {
       res.end(JSON.stringify({ error: { message: 'invalid json' } }));
       return;
     }
+    lastRequest = parsed;
 
     const auth = req.headers.authorization || '';
     if (auth === 'Bearer bad-key') {

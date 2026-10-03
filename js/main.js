@@ -4,13 +4,26 @@
 import * as store from './storage.js';
 import { streamChat } from './provider.js';
 import { renderMarkdown } from './markdown.js';
+import {
+  MAX_ATTACHMENTS,
+  attachmentSummary,
+  checkFile,
+  classifyFile,
+  formatBytes,
+  isFull,
+  makeDocAttachment,
+  toMessageParts,
+} from './attachments.js';
+import { extractPdfText } from './pdf-text.js';
 
 const $ = (sel) => document.querySelector(sel);
 const hljs = window.hljs || null;
 
 /** @type {ReturnType<typeof store.defaultState>} */
 let state = store.loadState(window.localStorage);
-let pendingImage = null; // { dataUrl, name }
+let attachments = []; // 待发送附件：{ id, kind, name, size, dataUrl? | text? }
+let attachSeq = 0;
+let readingAttachments = 0; // 正在解析（PDF/文本读取）中的附件数
 let abortCtrl = null;
 let streaming = false;
 let lastRenderAt = 0;
@@ -130,6 +143,9 @@ const GEAR_SVG =
 const CHECK_SVG =
   '<svg viewBox="0 0 14 14" width="14" height="14"><path d="M2.5 7.5 5.5 10.5l6-7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
 
+const DOC_SVG =
+  '<svg viewBox="0 0 16 16" width="13" height="13"><path d="M4 1.8h4.6L12 5.2v9H4z" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M8.6 1.8v3.4H12" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linejoin="round"/><path d="M6 8.6h4M6 10.8h4" fill="none" stroke="currentColor" stroke-width="1.2" stroke-linecap="round"/></svg>';
+
 /** 由服务 id 生成稳定的头像色 */
 function providerColor(id) {
   let h = 0;
@@ -226,7 +242,7 @@ function renderModelSelect() {
   foot.addEventListener('click', (e) => {
     e.stopPropagation();
     closeModelMenu();
-    openSettings();
+    openSettings('api');
   });
   menu.appendChild(foot);
 
@@ -267,13 +283,13 @@ function renderEmptyState() {
     const btn = document.createElement('button');
     btn.className = 'primary-btn';
     btn.textContent = '去配置 API';
-    btn.addEventListener('click', () => openSettings());
+    btn.addEventListener('click', () => openSettings('api'));
     wrap.appendChild(btn);
   } else {
     wrap.innerHTML = `
       <div class="es-mark"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 6h16v10H8l-4 4V6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
       <h3>开始新对话</h3>
-      <p>输入消息开始聊天，可附带图片；顶部可随时切换模型。</p>`;
+      <p>输入消息开始聊天，可附带图片与文档；顶部可随时切换模型。</p>`;
   }
   box.appendChild(wrap);
 }
@@ -299,6 +315,43 @@ function addCodeCopyButtons(root) {
   });
 }
 
+/** 文档片段的元信息文案，如「3 页 · 1200 字」 */
+function docMetaText(part) {
+  const chars = (part.text || '').length;
+  return [
+    part.pages ? `${part.pages} 页` : '',
+    chars ? `${chars} 字` : '无文本',
+    part.truncated ? '已截断' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+}
+
+/** 消息气泡内的文档片段：点击标题行可展开查看已提取的文本 */
+function renderDocPart(part) {
+  const box = document.createElement('details');
+  box.className = 'doc-part';
+
+  const head = document.createElement('summary');
+  const icon = document.createElement('span');
+  icon.className = 'doc-icon';
+  icon.innerHTML = DOC_SVG;
+  const name = document.createElement('span');
+  name.className = 'doc-name';
+  name.textContent = part.name || '未命名文档';
+  const meta = document.createElement('span');
+  meta.className = 'doc-meta';
+  meta.textContent = docMetaText(part);
+  head.append(icon, name, meta);
+
+  const pre = document.createElement('pre');
+  pre.className = 'doc-text';
+  pre.textContent = part.text || '（未能提取到文本内容）';
+
+  box.append(head, pre);
+  return box;
+}
+
 function renderMessageEl(msg) {
   const el = document.createElement('article');
   el.className = `msg ${msg.role}`;
@@ -318,6 +371,8 @@ function renderMessageEl(msg) {
         img.src = part.dataUrl;
         img.alt = part.name || '图片';
         bubble.appendChild(img);
+      } else if (part.type === 'file') {
+        bubble.appendChild(renderDocPart(part));
       } else if (part.type === 'text' && part.text) {
         bubble.appendChild(document.createTextNode(part.text));
       }
@@ -399,8 +454,8 @@ function setStreamingUI(on) {
 }
 
 function validateSend() {
-  const hasText = $('#input').value.trim().length > 0;
-  if (!hasText && !pendingImage) return '请输入消息或添加图片';
+  if (readingAttachments > 0) return '附件正在解析中，请稍候';
+  if (!hasSendableContent()) return '请输入消息或添加图片/文档';
   if (!state.providers.length) return '请先添加 API 服务';
   if (!state.selectedModel) return '请选择模型';
   const p = selectedProvider();
@@ -418,7 +473,7 @@ async function send() {
   }
   const err = validateSend();
   if (err) {
-    if (!state.providers.length) openSettings();
+    if (!state.providers.length) openSettings('api');
     toast(err, 'error');
     return;
   }
@@ -427,12 +482,12 @@ async function send() {
   const text = $('#input').value.trim();
   const content = [];
   if (text) content.push({ type: 'text', text });
-  if (pendingImage) content.push({ type: 'image', dataUrl: pendingImage.dataUrl, name: pendingImage.name });
+  content.push(...toMessageParts(attachments));
 
   store.addMessage(state, session.id, { role: 'user', content });
   $('#input').value = '';
   autoGrow();
-  clearAttachment();
+  clearAttachments();
   persist();
   renderSessions();
   renderMessages();
@@ -561,38 +616,239 @@ function stop() {
 
 // ---------- 附件 ----------
 
-function clearAttachment() {
-  pendingImage = null;
-  $('#attach-preview').classList.add('hidden');
-  $('#file-input').value = '';
+/** 附件是否可发送（文本或附件至少其一，且无解析中的附件） */
+function hasSendableContent() {
+  return $('#input').value.trim().length > 0 || attachments.length > 0;
 }
 
-function handleFile(file) {
-  if (!file) return;
-  if (!/^image\//.test(file.type)) {
-    toast('MVP 阶段仅支持图片附件（文档支持在后续版本）', 'error');
-    return;
+function nextAttachId() {
+  attachSeq += 1;
+  return `att-${attachSeq}`;
+}
+
+function replaceAttachment(id, next) {
+  const idx = attachments.findIndex((a) => a.id === id);
+  if (idx !== -1) attachments[idx] = next;
+}
+
+function removeAttachment(id) {
+  attachments = attachments.filter((a) => a.id !== id);
+  renderAttachments();
+}
+
+function clearAttachments() {
+  attachments = [];
+  readingAttachments = 0;
+  $('#file-input').value = '';
+  renderAttachments();
+}
+
+function chipSubText(a) {
+  if (a.kind === 'image') return formatBytes(a.size);
+  const bits = [formatBytes(a.size)];
+  if (a.pages) bits.push(`${a.pages} 页`);
+  bits.push(a.text ? `${a.text.length} 字` : '未提取到文本');
+  if (a.truncated) bits.push('已截断');
+  return bits.join(' · ');
+}
+
+function renderAttachChip(a) {
+  const chip = document.createElement('div');
+  chip.className = 'attach-chip' + (a.loading ? ' loading' : '');
+  chip.dataset.id = a.id;
+  chip.dataset.kind = a.kind;
+
+  if (a.kind === 'image' && a.dataUrl) {
+    const img = document.createElement('img');
+    img.className = 'chip-thumb';
+    img.src = a.dataUrl;
+    img.alt = a.name || '图片';
+    chip.appendChild(img);
+  } else {
+    const icon = document.createElement('span');
+    icon.className = 'chip-icon';
+    icon.innerHTML = DOC_SVG;
+    chip.appendChild(icon);
   }
-  if (file.size > 5 * 1024 * 1024) {
-    toast('图片不能超过 5MB', 'error');
-    return;
+
+  const body = document.createElement('div');
+  body.className = 'chip-body';
+  const name = document.createElement('span');
+  name.className = 'chip-name';
+  name.textContent = a.name || '未命名文件';
+  name.title = a.name || '';
+  const sub = document.createElement('span');
+  sub.className = 'chip-sub';
+  sub.textContent = a.loading ? '解析中…' : chipSubText(a);
+  body.append(name, sub);
+
+  const del = document.createElement('button');
+  del.className = 'chip-del';
+  del.type = 'button';
+  del.title = '移除';
+  del.setAttribute('aria-label', `移除 ${a.name || '附件'}`);
+  del.innerHTML =
+    '<svg viewBox="0 0 16 16" width="11" height="11"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
+  del.addEventListener('click', () => removeAttachment(a.id));
+
+  chip.append(body, del);
+  return chip;
+}
+
+function renderAttachments() {
+  const strip = $('#attach-strip');
+  strip.innerHTML = '';
+  $('#attach-bar').classList.toggle('hidden', !attachments.length);
+  for (const a of attachments) strip.appendChild(renderAttachChip(a));
+
+  const summary = attachmentSummary(attachments);
+  $('#attach-summary').textContent = summary
+    ? summary + (isFull(attachments) ? ` · 已达 ${MAX_ATTACHMENTS} 个上限` : '')
+    : '';
+  $('#btn-attach').disabled = isFull(attachments) || readingAttachments > 0;
+}
+
+function readAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function readAsText(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(new Error('读取文件失败'));
+    reader.readAsText(file);
+  });
+}
+
+let pdfjsPromise = null;
+
+/** 懒加载 pdf.js（体积较大，仅首次添加 PDF 时载入） */
+function loadPdfjs() {
+  if (!pdfjsPromise) {
+    pdfjsPromise = import('./vendor/pdfjs/pdf.min.mjs')
+      .then((lib) => {
+        lib.GlobalWorkerOptions.workerSrc = new URL('./vendor/pdfjs/pdf.worker.min.mjs', import.meta.url).href;
+        return lib;
+      })
+      .catch((e) => {
+        pdfjsPromise = null; // 允许下次重试
+        throw new Error(`PDF 解析库加载失败：${(e && e.message) || e}`);
+      });
   }
-  const reader = new FileReader();
-  reader.onload = () => {
-    pendingImage = { dataUrl: reader.result, name: file.name };
-    $('#attach-thumb').src = reader.result;
-    $('#attach-name').textContent = file.name;
-    $('#attach-preview').classList.remove('hidden');
-  };
-  reader.onerror = () => toast('读取图片失败', 'error');
-  reader.readAsDataURL(file);
+  return pdfjsPromise;
+}
+
+async function readPdfText(file) {
+  const pdfjsLib = await loadPdfjs();
+  const { text, pages } = await extractPdfText({
+    data: new Uint8Array(await file.arrayBuffer()),
+    pdfjsLib,
+    cMapUrl: new URL('./vendor/pdfjs/cmaps/', import.meta.url).href,
+  });
+  if (!text.trim()) {
+    toast(`${file.name} 未提取到文本（可能是扫描件），将只发送文档名`, 'error');
+  }
+  return { text, pages };
+}
+
+/** 解析单个文件；解析期间的占位项在完成后就地替换 */
+async function loadAttachment(file) {
+  const kind = classifyFile(file);
+  const id = nextAttachId();
+  attachments.push({ id, kind, name: file.name, size: file.size, loading: true });
+  readingAttachments += 1;
+  renderAttachments();
+
+  try {
+    let loaded;
+    if (kind === 'image') {
+      loaded = { kind: 'image', name: file.name, size: file.size, dataUrl: await readAsDataUrl(file) };
+    } else if (kind === 'pdf') {
+      const { text, pages } = await readPdfText(file);
+      loaded = makeDocAttachment({ name: file.name, text, pages, size: file.size });
+    } else {
+      loaded = makeDocAttachment({ name: file.name, text: await readAsText(file), size: file.size });
+    }
+    replaceAttachment(id, { ...loaded, id });
+  } catch (e) {
+    removeAttachment(id);
+    toast(`${file.name} 解析失败：${(e && e.message) || e}`, 'error');
+  } finally {
+    readingAttachments = Math.max(0, readingAttachments - 1);
+    renderAttachments();
+  }
+}
+
+async function handleFiles(fileList) {
+  const files = Array.from(fileList || []);
+  if (!files.length) return;
+  for (const file of files) {
+    if (isFull(attachments)) {
+      toast(`最多添加 ${MAX_ATTACHMENTS} 个附件`, 'error');
+      break;
+    }
+    const err = checkFile(file);
+    if (err) {
+      toast(err, 'error');
+      continue;
+    }
+    await loadAttachment(file);
+  }
+  renderAttachments();
 }
 
 // ---------- 设置 ----------
 
-function openSettings() {
-  $('#settings-mask').classList.remove('hidden');
+const THEME_LABELS = { light: '明亮', dark: '暗黑' };
+
+function applyTheme(theme) {
+  const value = store.normalizeTheme(theme);
+  document.documentElement.dataset.theme = value;
+  const meta = document.querySelector('meta[name="color-scheme"]');
+  if (meta) meta.setAttribute('content', value);
+  return value;
+}
+
+function renderThemeOptions() {
+  const current = store.normalizeTheme(state.settings && state.settings.theme);
+  for (const btn of document.querySelectorAll('#theme-options .theme-option')) {
+    const active = btn.dataset.themeValue === current;
+    btn.classList.toggle('active', active);
+    btn.setAttribute('aria-pressed', String(active));
+  }
+}
+
+function chooseTheme(theme) {
+  const applied = store.setTheme(state, theme);
+  persist();
+  applyTheme(applied);
+  renderThemeOptions();
+  toast(`已切换到${THEME_LABELS[applied] || applied}主题`);
+}
+
+/** 切换设置面板：'appearance' | 'api' */
+function switchSettingsPanel(panel) {
+  const target = panel === 'api' ? 'api' : 'appearance';
+  for (const tab of document.querySelectorAll('.settings-tab')) {
+    const active = tab.dataset.panel === target;
+    tab.classList.toggle('active', active);
+    tab.setAttribute('aria-selected', String(active));
+  }
+  $('#panel-appearance').classList.toggle('hidden', target !== 'appearance');
+  $('#panel-api').classList.toggle('hidden', target !== 'api');
+}
+
+function openSettings(panel = 'appearance') {
+  renderThemeOptions();
   renderProviderList();
+  switchSettingsPanel(panel);
+  $('#settings-mask').classList.remove('hidden');
 }
 
 function closeSettings() {
@@ -739,7 +995,7 @@ function bind() {
   $('#btn-pill-settings').addEventListener('click', (e) => {
     e.stopPropagation();
     closeModelMenu();
-    openSettings();
+    openSettings('api');
   });
   $('#model-select').addEventListener('click', (e) => {
     e.stopPropagation();
@@ -769,6 +1025,17 @@ function bind() {
   $('#provider-form').addEventListener('submit', saveProviderForm);
   $('#btn-del-provider').addEventListener('click', deleteProviderForm);
 
+  for (const tab of document.querySelectorAll('.settings-tab')) {
+    tab.addEventListener('click', () => switchSettingsPanel(tab.dataset.panel));
+  }
+  for (const opt of document.querySelectorAll('#theme-options .theme-option')) {
+    opt.addEventListener('click', () => chooseTheme(opt.dataset.themeValue));
+  }
+  $('#btn-sidebar-settings').addEventListener('click', () => {
+    closeSidebarOnMobile();
+    openSettings('appearance');
+  });
+
   $('#btn-send').addEventListener('click', send);
   $('#btn-stop').addEventListener('click', stop);
 
@@ -781,8 +1048,12 @@ function bind() {
   });
 
   $('#btn-attach').addEventListener('click', () => $('#file-input').click());
-  $('#file-input').addEventListener('change', (e) => handleFile(e.target.files[0]));
-  $('#btn-attach-remove').addEventListener('click', clearAttachment);
+  $('#file-input').addEventListener('change', (e) => {
+    const files = Array.from(e.target.files || []);
+    e.target.value = ''; // 允许再次选择同一文件
+    handleFiles(files);
+  });
+  $('#btn-attach-clear').addEventListener('click', clearAttachments);
 
   $('#btn-toggle-sidebar').addEventListener('click', () => $('#sidebar').classList.toggle('open'));
   document.addEventListener('click', (e) => {
@@ -799,8 +1070,11 @@ function bind() {
 function init() {
   if (!state.sessions.length) store.createSession(state, state.selectedModel);
   persist();
+  applyTheme(state.settings && state.settings.theme);
   bind();
   renderAll();
+  renderAttachments();
+  renderThemeOptions();
   autoGrow();
 }
 

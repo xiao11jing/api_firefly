@@ -67,3 +67,33 @@ test('streamChat 端到端：网络不可达给出可读错误', async () => {
 test('buildEndpoint 与 mock 实际地址一致', () => {
   assert.equal(buildEndpoint({ baseUrl }), `${baseUrl}/chat/completions`);
 });
+
+test('mock server 记录最近一次请求，便于端到端校验报文', async () => {
+  await streamChat({
+    provider: { baseUrl, apiKey: 'ok' },
+    model: 'mock-model',
+    messages: [
+      {
+        role: 'user',
+        content: [
+          { type: 'text', text: '看下附件' },
+          { type: 'image', dataUrl: 'data:image/png;base64,AAA', name: 'a.png' },
+          { type: 'file', name: 'note.md', text: '正文内容' },
+        ],
+      },
+    ],
+  });
+
+  const resp = await fetch(baseUrl.replace(/\/v1$/, '') + '/last-request');
+  assert.equal(resp.status, 200);
+  const body = await resp.json();
+  assert.equal(body.stream, true);
+  assert.equal(body.model, 'mock-model');
+  const content = body.messages[0].content;
+  assert.ok(Array.isArray(content));
+  assert.equal(content[0].text, '看下附件');
+  assert.equal(content[1].type, 'image_url');
+  assert.equal(content[1].image_url.url, 'data:image/png;base64,AAA');
+  assert.match(content[2].text, /【附件文档：note\.md】/);
+  assert.match(content[2].text, /正文内容/);
+});

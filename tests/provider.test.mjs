@@ -6,6 +6,7 @@ import {
   buildHeaders,
   toApiMessage,
   buildChatBody,
+  filePartToText,
   SSEParser,
   extractDelta,
 } from '../js/provider.js';
@@ -64,6 +65,61 @@ test('toApiMessage 含图片时转为 vision 数组格式', () => {
   assert.equal(m.content[0].type, 'text');
   assert.equal(m.content[1].type, 'image_url');
   assert.equal(m.content[1].image_url.url, 'data:image/png;base64,AAAA');
+});
+
+test('toApiMessage 支持多张图片：保持片段顺序', () => {
+  const m = toApiMessage({
+    role: 'user',
+    content: [
+      { type: 'text', text: '对比这两张图' },
+      { type: 'image', dataUrl: 'data:image/png;base64,AAA', name: 'a.png' },
+      { type: 'image', dataUrl: 'data:image/png;base64,BBB', name: 'b.png' },
+    ],
+  });
+  assert.ok(Array.isArray(m.content));
+  assert.equal(m.content.length, 3);
+  assert.deepEqual(m.content[0], { type: 'text', text: '对比这两张图' });
+  assert.equal(m.content[1].image_url.url, 'data:image/png;base64,AAA');
+  assert.equal(m.content[2].image_url.url, 'data:image/png;base64,BBB');
+});
+
+test('toApiMessage 纯文档（无图片）内嵌为字符串并带标记', () => {
+  const m = toApiMessage({
+    role: 'user',
+    content: [
+      { type: 'text', text: '总结一下' },
+      { type: 'file', name: 'note.md', text: '# 标题\n正文' },
+    ],
+  });
+  assert.equal(typeof m.content, 'string');
+  assert.match(m.content, /总结一下/);
+  assert.match(m.content, /【附件文档：note\.md】/);
+  assert.match(m.content, /# 标题\n正文/);
+  assert.match(m.content, /【附件文档结束】/);
+});
+
+test('toApiMessage 图文与文档混排：图片走 vision，文档走文本片段', () => {
+  const m = toApiMessage({
+    role: 'user',
+    content: [
+      { type: 'text', text: '检查图纸和说明' },
+      { type: 'image', dataUrl: 'data:image/png;base64,AAA', name: 'a.png' },
+      { type: 'file', name: 'spec.pdf', text: '规格说明', pages: 3 },
+    ],
+  });
+  assert.ok(Array.isArray(m.content));
+  assert.equal(m.content.length, 3);
+  assert.equal(m.content[1].type, 'image_url');
+  assert.equal(m.content[2].type, 'text');
+  assert.match(m.content[2].text, /【附件文档：spec\.pdf】/);
+  assert.match(m.content[2].text, /规格说明/);
+});
+
+test('filePartToText 处理空文本、截断与缺名', () => {
+  assert.match(filePartToText({ name: 'a.txt', text: '   ' }), /未能提取到文本内容/);
+  assert.match(filePartToText({ name: 'a.txt', text: 'x', truncated: true }), /截断后的内容/);
+  assert.match(filePartToText({ text: 'x' }), /【附件文档：未命名文档】/);
+  assert.ok(!filePartToText({ name: 'a.txt', text: 'x' }).includes('截断'));
 });
 
 test('buildChatBody 默认开启流式', () => {

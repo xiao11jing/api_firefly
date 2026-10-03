@@ -4,6 +4,15 @@
 
 export const STORAGE_KEY = 'ai-multi-chat-v1';
 
+/** 支持的界面主题 */
+export const THEMES = ['dark', 'light'];
+export const DEFAULT_THEME = 'dark';
+
+/** 主题归一化：未知取值回退到默认主题 */
+export function normalizeTheme(value) {
+  return THEMES.includes(value) ? value : DEFAULT_THEME;
+}
+
 export function defaultState() {
   return {
     version: 1,
@@ -11,7 +20,7 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: {},
+    settings: { theme: DEFAULT_THEME },
   };
 }
 
@@ -44,6 +53,12 @@ export function saveState(storage, state) {
   storage.setItem(STORAGE_KEY, JSON.stringify(state));
 }
 
+/** 设置界面主题，返回生效后的取值 */
+export function setTheme(state, theme) {
+  state.settings = { ...(state.settings || {}), theme: normalizeTheme(theme) };
+  return state.settings.theme;
+}
+
 function normalizeState(s) {
   const base = defaultState();
   if (!s || typeof s !== 'object') return base;
@@ -59,7 +74,10 @@ function normalizeState(s) {
             model: String(s.selectedModel.model || ''),
           }
         : null,
-    settings: s.settings && typeof s.settings === 'object' ? s.settings : {},
+    settings: {
+      ...(s.settings && typeof s.settings === 'object' ? s.settings : {}),
+      theme: normalizeTheme(s.settings && s.settings.theme),
+    },
   };
   if (state.activeSessionId && !state.sessions.some((x) => x.id === state.activeSessionId)) {
     state.activeSessionId = state.sessions.length ? state.sessions[0].id : null;
@@ -130,7 +148,7 @@ export function getActiveSession(state) {
   return state.sessions.find((s) => s.id === state.activeSessionId) || null;
 }
 
-/** 追加消息；会话首条消息且为用户文本时自动生成标题 */
+/** 追加消息；会话首条用户消息决定标题（优先正文，其次附件名） */
 export function addMessage(state, sessionId, message) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s) return null;
@@ -143,15 +161,20 @@ export function addMessage(state, sessionId, message) {
   };
   s.messages.push(msg);
   s.updatedAt = Date.now();
-  const firstIsUserText =
-    s.messages.length === 1 &&
-    msg.role === 'user' &&
-    msg.content.some((p) => p.type === 'text' && p.text && p.text.trim());
-  if (firstIsUserText) {
-    const text = msg.content.find((p) => p.type === 'text');
-    s.title = sessionTitleFrom(text.text);
-  }
+  if (s.messages.length === 1 && msg.role === 'user') applyTitleFromMessage(s, msg);
   return msg;
+}
+
+function applyTitleFromMessage(session, msg) {
+  const parts = Array.isArray(msg.content) ? msg.content : [];
+  const text = parts.find((p) => p.type === 'text' && p.text && p.text.trim());
+  if (text) {
+    session.title = sessionTitleFrom(text.text);
+    return;
+  }
+  const files = parts.filter((p) => p.type === 'file' || p.type === 'image');
+  if (files.length === 1) session.title = sessionTitleFrom(files[0].name || '附件会话');
+  else if (files.length > 1) session.title = `${files.length} 个附件`;
 }
 
 /** 更新已有消息（用于流式追加文本） */

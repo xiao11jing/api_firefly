@@ -33,10 +33,27 @@ export function buildHeaders(provider) {
 }
 
 /**
+ * 文档片段 → 内嵌 prompt 的文本。
+ * 前端已把文档文本提取出来，这里用显式标记包裹，便于模型区分正文与附件。
+ */
+export function filePartToText(part) {
+  const name = String((part && part.name) || '未命名文档');
+  const body = typeof part.text === 'string' ? part.text.trim() : '';
+  const note = part.truncated ? '（文档过长，以下为截断后的内容）' : '';
+  return `\n\n【附件文档：${name}】${note}\n${body || '（未能提取到文本内容）'}\n【附件文档结束】\n\n`;
+}
+
+/** 单个非图片片段 → 文本 */
+function partToText(p) {
+  if (p.type === 'file') return filePartToText(p);
+  return p.text || '';
+}
+
+/**
  * 内部消息 → API 消息。
- * 内部格式：{ role, content: [{type:'text'|'image', ...}] }
+ * 内部格式：{ role, content: [{type:'text'|'image'|'file', ...}] }
  * 纯文本合并为字符串（最大化兼容只接受 string content 的实现）；
- * 含图片时使用多模态 content 数组（OpenAI vision 标准格式）。
+ * 含图片时使用多模态 content 数组（OpenAI vision 标准格式，支持多图）。
  */
 export function toApiMessage(msg) {
   if (typeof msg.content === 'string') {
@@ -45,17 +62,13 @@ export function toApiMessage(msg) {
   const parts = Array.isArray(msg.content) ? msg.content : [];
   const hasImage = parts.some((p) => p.type === 'image');
   if (!hasImage) {
-    const text = parts
-      .filter((p) => p.type === 'text')
-      .map((p) => p.text || '')
-      .join('');
-    return { role: msg.role, content: text };
+    return { role: msg.role, content: parts.map(partToText).join('') };
   }
   const content = parts.map((p) => {
     if (p.type === 'image') {
       return { type: 'image_url', image_url: { url: p.dataUrl } };
     }
-    return { type: 'text', text: p.text || '' };
+    return { type: 'text', text: partToText(p) };
   });
   return { role: msg.role, content };
 }
