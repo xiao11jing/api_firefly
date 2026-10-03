@@ -3,8 +3,12 @@
  * 启动：npm run mock  （监听 http://127.0.0.1:8717）
  * 端点：POST /v1/chat/completions（支持 stream / 非 stream / 故意报错）
  *       GET  /last-request（返回最近一次收到的请求体，供端到端校验报文）
+ *       GET  /health（返回 MOCK_VERSION，供端到端识别陈旧的常驻进程）
  */
 import http from 'node:http';
+
+/** 改动 mock 行为时递增，E2E 会据此提示「需要重启 mock 服务」 */
+export const MOCK_VERSION = '2';
 
 const PORT = Number(process.env.MOCK_PORT || 8717);
 
@@ -14,13 +18,25 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization',
 };
 
-const SAMPLE = [
-  '# 模拟回复\n\n',
+const SAMPLE_TAIL = [
   '这是一段 **流式** 回复，用于验证端到端链路。\n\n',
   '```js\nconst sum = (a, b) => a + b;\nconsole.log(sum(1, 2));\n```\n\n',
   '- 第一点\n- 第二点\n\n',
   '最后一段 `inline code` 与 [链接](https://example.com)。',
 ];
+
+/** 样例回复里带上模型名，便于端到端区分不同分支 */
+function sampleFor(model) {
+  return [`# 模拟回复 (${model})\n\n`, ...SAMPLE_TAIL];
+}
+
+/** 回传的用量：固定值，便于前端断言 */
+const MOCK_USAGE = { prompt_tokens: 42, completion_tokens: 108, total_tokens: 150 };
+
+/** 模型名含 nousage 时故意不回传 usage，用于验证前端的估算兜底 */
+function sendsUsage(model) {
+  return !/nousage/i.test(String(model || ''));
+}
 
 function sseEvent(delta, finish = null) {
   return `data: ${JSON.stringify({
@@ -30,10 +46,25 @@ function sseEvent(delta, finish = null) {
   })}\n\n`;
 }
 
+function sseUsageEvent(usage) {
+  return `data: ${JSON.stringify({
+    id: 'chatcmpl-mock',
+    object: 'chat.completion.chunk',
+    choices: [],
+    usage,
+  })}\n\n`;
+}
+
 export function createMockServer() {
   let lastRequest = null;
 
   return http.createServer((req, res) => {
+  if (req.method === 'GET' && req.url.includes('/health')) {
+    res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ok: true, version: MOCK_VERSION }));
+    return;
+  }
+
   // 回看最近一次收到的请求体，便于端到端断言真实发出的报文
   if (req.method === 'GET' && req.url.includes('/last-request')) {
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
@@ -74,13 +105,14 @@ export function createMockServer() {
     }
 
     if (parsed.stream) {
+      const sample = sampleFor(parsed.model);
       res.writeHead(200, {
         ...CORS,
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache',
       });
       res.write(sseEvent({ role: 'assistant', content: '' }));
-      for (const piece of SAMPLE) {
+      for (const piece of sample) {
         // 按字符切分，模拟真实 token 流
         for (const ch of piece) {
           res.write(sseEvent({ content: ch }));
@@ -88,19 +120,20 @@ export function createMockServer() {
         }
       }
       res.write(sseEvent({}, 'stop'));
+      if (sendsUsage(parsed.model)) res.write(sseUsageEvent(MOCK_USAGE));
       res.write('data: [DONE]\n\n');
       res.end();
       return;
     }
 
-    const text = SAMPLE.join('');
+    const text = sampleFor(parsed.model).join('');
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
         id: 'chatcmpl-mock',
         object: 'chat.completion',
         choices: [{ index: 0, message: { role: 'assistant', content: text }, finish_reason: 'stop' }],
-        usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+        ...(sendsUsage(parsed.model) ? { usage: MOCK_USAGE } : {}),
       })
     );
   });

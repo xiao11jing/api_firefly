@@ -73,13 +73,19 @@ export function toApiMessage(msg) {
   return { role: msg.role, content };
 }
 
-/** 构造请求体 */
-export function buildChatBody({ model, messages, stream = true }) {
-  return {
+/**
+ * 构造请求体。
+ * 流式请求额外带上 stream_options.include_usage，让服务端在流末尾回传 usage
+ * （OpenAI 兼容格式的标准做法，缺失时前端按字符数估算）。
+ */
+export function buildChatBody({ model, messages, stream = true, includeUsage = false }) {
+  const body = {
     model,
     messages: messages.map(toApiMessage),
     stream,
   };
+  if (stream && includeUsage) body.stream_options = { include_usage: true };
+  return body;
 }
 
 /** SSE 解析器：增量喂入文本块，产出事件 data 字符串数组 */
@@ -227,7 +233,7 @@ export async function streamChat({
 }) {
   const endpoint = buildEndpoint(provider);
   const headers = buildHeaders(provider);
-  const body = buildChatBody({ model, messages, stream: true });
+  const body = buildChatBody({ model, messages, stream: true, includeUsage: true });
 
   let resp;
   try {

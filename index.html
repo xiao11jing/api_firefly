@@ -47,6 +47,10 @@
           <svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
         <div class="topbar-title" id="topbar-title">新会话</div>
+        <button class="mode-toggle" id="btn-compare-toggle" type="button" aria-pressed="false" title="对比模式：同一条消息并行发给两个模型，左右分栏展示">
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><rect x="1.6" y="2.6" width="5.4" height="10.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="9" y="2.6" width="5.4" height="10.8" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
+          <span>对比模式</span>
+        </button>
       </header>
 
       <section class="messages" id="messages" aria-live="polite"></section>
@@ -167,9 +171,20 @@
               <label class="field"><span>代理地址（可选）</span>
                 <input id="pf-proxyUrl" placeholder="如 http://127.0.0.1:8787/proxy/">
               </label>
+              <div class="field-row">
+                <label class="field"><span>输入价格（$/百万 token，可选）</span>
+                  <input id="pf-priceInput" inputmode="decimal" placeholder="如 2.5">
+                </label>
+                <label class="field"><span>输出价格（$/百万 token，可选）</span>
+                  <input id="pf-priceOutput" inputmode="decimal" placeholder="如 10">
+                </label>
+              </div>
               <p class="form-hint">
                 兼容 OpenAI Chat Completions 格式。代理地址用于解决浏览器跨域：请求地址 = 代理地址 + Base URL + /chat/completions；
                 若代理本身即为兼容端点，可直接把 Base URL 指向它。浏览器直连仅建议本地自用。
+              </p>
+              <p class="form-hint">
+                单价用于估算费用：留空则套用内置参考价（可能已过时，仅供估算）；填写后该服务全部模型按此价计算。
               </p>
               <div class="form-actions">
                 <button type="submit" class="primary-btn">保存</button>

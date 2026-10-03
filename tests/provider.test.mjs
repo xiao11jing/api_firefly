@@ -127,6 +127,26 @@ test('buildChatBody 默认开启流式', () => {
   assert.equal(body.stream, true);
   assert.equal(body.model, 'gpt-4o-mini');
   assert.equal(body.messages[0].content, 'hi');
+  assert.equal('stream_options' in body, false);
+});
+
+test('buildChatBody 请求用量时带上 stream_options', () => {
+  const withUsage = buildChatBody({
+    model: 'm',
+    messages: [{ role: 'user', content: 'hi' }],
+    includeUsage: true,
+  });
+  assert.deepEqual(withUsage.stream_options, { include_usage: true });
+
+  // 非流式请求不带该字段
+  const noStream = buildChatBody({ model: 'm', messages: [], stream: false, includeUsage: true });
+  assert.equal('stream_options' in noStream, false);
+});
+
+test('extractDelta 支持仅含 usage 的收尾事件', () => {
+  const r = extractDelta(JSON.stringify({ choices: [], usage: { prompt_tokens: 42, completion_tokens: 108, total_tokens: 150 } }));
+  assert.equal(r.text, '');
+  assert.equal(r.usage.total_tokens, 150);
 });
 
 test('SSEParser 处理跨块数据与多事件', () => {

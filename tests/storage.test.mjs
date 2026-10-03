@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   STORAGE_KEY,
   DEFAULT_THEME,
+  MAX_COMPARE_TARGETS,
   defaultState,
   loadState,
   saveState,
@@ -12,11 +13,16 @@ import {
   getActiveSession,
   addMessage,
   updateMessage,
+  removeMessage,
+  resetMessage,
+  groupMessages,
   sessionTitleFrom,
   saveProvider,
   deleteProvider,
   normalizeTheme,
   setTheme,
+  setCompareEnabled,
+  setCompareTargets,
 } from '../js/storage.js';
 
 function fakeStorage() {
@@ -205,4 +211,154 @@ test('归一化：非法或缺失主题回退为默认', () => {
   assert.equal(loadState(st).settings.theme, DEFAULT_THEME);
   st.setItem(STORAGE_KEY, JSON.stringify({ version: 1 }));
   assert.equal(loadState(st).settings.theme, DEFAULT_THEME);
+});
+
+test('对比模式：默认关闭，开关与目标归一化', () => {
+  const state = defaultState();
+  assert.deepEqual(state.compare, { enabled: false, targets: [] });
+
+  assert.equal(setCompareEnabled(state, true), true);
+  const kept = setCompareTargets(state, [
+    { providerId: 'p1', model: 'm1' },
+    { providerId: 'p2', model: 'm2' },
+    { providerId: 'p3', model: 'm3' },
+  ]);
+  assert.equal(kept.length, MAX_COMPARE_TARGETS);
+  assert.deepEqual(kept[0], { providerId: 'p1', model: 'm1' });
+  assert.equal(state.compare.enabled, true);
+
+  // 残缺项被丢弃，开关保持不变
+  assert.deepEqual(setCompareTargets(state, [{ providerId: 'p1' }, null, { model: 'm' }]), []);
+  assert.equal(state.compare.enabled, true);
+});
+
+test('对比模式随状态持久化，非法数据回退默认', () => {
+  const st = fakeStorage();
+  const state = defaultState();
+  setCompareEnabled(state, true);
+  setCompareTargets(state, [{ providerId: 'p1', model: 'm1' }]);
+  saveState(st, state);
+  const loaded = loadState(st);
+  assert.equal(loaded.compare.enabled, true);
+  assert.deepEqual(loaded.compare.targets, [{ providerId: 'p1', model: 'm1' }]);
+
+  st.setItem(STORAGE_KEY, JSON.stringify({ version: 1, compare: { enabled: 'yes', targets: 'x' } }));
+  const fallback = loadState(st);
+  assert.deepEqual(fallback.compare, { enabled: false, targets: [] });
+});
+
+test('删除服务时清理指向它的对比目标', () => {
+  const state = defaultState();
+  const a = saveProvider(state, { name: 'A', baseUrl: 'https://a.com', models: ['m'] });
+  const b = saveProvider(state, { name: 'B', baseUrl: 'https://b.com', models: ['m'] });
+  setCompareEnabled(state, true);
+  setCompareTargets(state, [
+    { providerId: a.id, model: 'm' },
+    { providerId: b.id, model: 'm' },
+  ]);
+  deleteProvider(state, a.id);
+  assert.deepEqual(state.compare.targets, [{ providerId: b.id, model: 'm' }]);
+});
+
+test('saveProvider 归一化单价：非法或缺失记为 null', () => {
+  const state = defaultState();
+  const withPrice = saveProvider(state, {
+    name: 'X',
+    baseUrl: 'https://x.com',
+    models: ['m'],
+    price: { input: '2.5', output: '10' },
+  });
+  assert.deepEqual(withPrice.price, { input: 2.5, output: 10 });
+
+  const halfPrice = saveProvider(state, { name: 'Y', baseUrl: 'https://y.com', price: { input: 1 } });
+  assert.equal(halfPrice.price, null);
+  const noPrice = saveProvider(state, { name: 'Z', baseUrl: 'https://z.com' });
+  assert.equal(noPrice.price, null);
+});
+
+test('回复消息记录模型、批次与用量，并随状态持久化', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const msg = addMessage(state, s.id, {
+    role: 'assistant',
+    content: [{ type: 'text', text: 'hi' }],
+    model: { providerId: 'p1', model: 'm1' },
+    batchId: 'b1',
+  });
+  assert.deepEqual(msg.model, { providerId: 'p1', model: 'm1' });
+  assert.equal(msg.batchId, 'b1');
+
+  updateMessage(state, s.id, msg.id, {
+    usage: { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimated: false },
+    ms: 1200,
+  });
+  const st = fakeStorage();
+  saveState(st, state);
+  const [loaded] = loadState(st).sessions[0].messages;
+  assert.deepEqual(loaded.model, { providerId: 'p1', model: 'm1' });
+  assert.equal(loaded.batchId, 'b1');
+  assert.deepEqual(loaded.usage, { promptTokens: 10, completionTokens: 5, totalTokens: 15, estimated: false });
+  assert.equal(loaded.ms, 1200);
+});
+
+test('归一化：损坏的用量与耗时字段被丢弃', () => {
+  const st = fakeStorage();
+  st.setItem(
+    STORAGE_KEY,
+    JSON.stringify({
+      version: 1,
+      sessions: [
+        {
+          id: 's1',
+          title: 't',
+          messages: [
+            { id: 'm1', role: 'assistant', content: [{ type: 'text', text: 'a' }], usage: { promptTokens: 'x' }, ms: -5 },
+            { id: 'm2', role: 'assistant', content: 'not-an-array' },
+          ],
+          createdAt: 1,
+          updatedAt: 1,
+        },
+      ],
+    })
+  );
+  const msgs = loadState(st).sessions[0].messages;
+  assert.equal(msgs.length, 1);
+  assert.equal(msgs[0].usage, undefined);
+  assert.equal(msgs[0].ms, undefined);
+});
+
+test('removeMessage 与 resetMessage', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  const m = addMessage(state, s.id, { role: 'assistant', content: [{ type: 'text', text: '' }] });
+  assert.equal(removeMessage(state, s.id, 'ghost'), false);
+  assert.equal(s.messages.length, 1);
+  assert.equal(removeMessage(state, s.id, m.id), true);
+  assert.equal(s.messages.length, 0);
+
+  const m2 = addMessage(state, s.id, { role: 'assistant', content: [{ type: 'text', text: '错' }], error: true });
+  updateMessage(state, s.id, m2.id, { usage: { promptTokens: 1 }, ms: 5 });
+  const reset = resetMessage(state, s.id, m2.id);
+  assert.deepEqual(reset.content, [{ type: 'text', text: '' }]);
+  assert.equal(reset.error, undefined);
+  assert.equal(reset.usage, undefined);
+  assert.equal(reset.ms, undefined);
+});
+
+test('groupMessages 把同一批次的回复合并为一组', () => {
+  const groups = groupMessages([
+    { id: 'u1', role: 'user', content: [] },
+    { id: 'a1', role: 'assistant', content: [], batchId: 'b1' },
+    { id: 'a2', role: 'assistant', content: [], batchId: 'b1' },
+    { id: 'u2', role: 'user', content: [] },
+    { id: 'a3', role: 'assistant', content: [] },
+    { id: 'a4', role: 'assistant', content: [], batchId: 'b2' },
+    { id: 'a5', role: 'assistant', content: [], batchId: 'b3' },
+  ]);
+  assert.deepEqual(
+    groups.map((g) => g.map((m) => m.id)),
+    [['u1'], ['a1', 'a2'], ['u2'], ['a3'], ['a4'], ['a5']]
+  );
+  assert.deepEqual(groupMessages(null), []);
+  assert.deepEqual(groupMessages([]), []);
 });

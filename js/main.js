@@ -2,7 +2,7 @@
  * main.js — 界面交互与状态装配
  */
 import * as store from './storage.js';
-import { streamChat } from './provider.js';
+import { streamChat, toApiMessage } from './provider.js';
 import { renderMarkdown } from './markdown.js';
 import {
   MAX_ATTACHMENTS,
@@ -15,6 +15,16 @@ import {
   toMessageParts,
 } from './attachments.js';
 import { extractPdfText } from './pdf-text.js';
+import {
+  computeCost,
+  estimateApiTokens,
+  estimateTokens,
+  formatCost,
+  formatTokens,
+  numOrNull,
+  resolvePrice,
+  usageToRecord,
+} from './usage.js';
 
 const $ = (sel) => document.querySelector(sel);
 const hljs = window.hljs || null;
@@ -24,9 +34,8 @@ let state = store.loadState(window.localStorage);
 let attachments = []; // 待发送附件：{ id, kind, name, size, dataUrl? | text? }
 let attachSeq = 0;
 let readingAttachments = 0; // 正在解析（PDF/文本读取）中的附件数
-let abortCtrl = null;
+let controllers = []; // 当前生成中的各分支中断器
 let streaming = false;
-let lastRenderAt = 0;
 
 // ---------- 基础工具 ----------
 
@@ -50,6 +59,74 @@ function providerById(id) {
 function selectedProvider() {
   if (!state.selectedModel) return null;
   return providerById(state.selectedModel.providerId);
+}
+
+// ---------- 对比模式 ----------
+
+function compareEnabled() {
+  return !!(state.compare && state.compare.enabled);
+}
+
+function compareTargets() {
+  return (state.compare && state.compare.targets) || [];
+}
+
+/** 校验一个 { providerId, model } 是否仍可用 */
+function resolveTarget(target) {
+  if (!target) return null;
+  const provider = providerById(target.providerId);
+  if (!provider) return null;
+  if (provider.models.length && !provider.models.includes(target.model)) return null;
+  return { provider, model: target.model };
+}
+
+/** 本次发送实际要跑的分支：对比模式下为两个模型，否则为当前选中的模型 */
+function sendTargets() {
+  if (compareEnabled()) {
+    return { comparing: true, targets: compareTargets().map(resolveTarget).filter(Boolean) };
+  }
+  const single = resolveTarget(state.selectedModel);
+  return { comparing: false, targets: single ? [single] : [] };
+}
+
+function renderCompareUI() {
+  const btn = $('#btn-compare-toggle');
+  const on = compareEnabled();
+  btn.classList.toggle('active', on);
+  btn.setAttribute('aria-pressed', String(on));
+}
+
+function toggleCompare() {
+  if (streaming) {
+    toast('生成中，请先停止');
+    return;
+  }
+  const on = !compareEnabled();
+  store.setCompareEnabled(state, on);
+  if (on && !compareTargets().length && state.selectedModel) {
+    store.setCompareTargets(state, [state.selectedModel]);
+  }
+  persist();
+  renderCompareUI();
+  renderModelSelect();
+  const count = compareTargets().length;
+  if (on) toast(count < 2 ? '对比模式：还需再选 1 个模型' : '对比模式：将并行发送给 2 个模型');
+  else toast('已关闭对比模式');
+}
+
+function toggleCompareTarget(target) {
+  const list = compareTargets();
+  const idx = list.findIndex((t) => t.providerId === target.providerId && t.model === target.model);
+  if (idx !== -1) {
+    store.setCompareTargets(state, list.filter((_, i) => i !== idx));
+  } else if (list.length >= store.MAX_COMPARE_TARGETS) {
+    toast(`对比模式最多 ${store.MAX_COMPARE_TARGETS} 个模型，请先取消一个`, 'error');
+    return;
+  } else {
+    store.setCompareTargets(state, [...list, target]);
+  }
+  persist();
+  renderModelSelect();
 }
 
 // ---------- 会话列表 ----------
@@ -186,7 +263,9 @@ function renderModelSelect() {
   }
   pill.classList.remove('attention');
 
-  let hasMatch = false;
+  const comparing = compareEnabled();
+  const targets = compareTargets();
+
   for (const p of state.providers) {
     const head = document.createElement('div');
     head.className = 'menu-group';
@@ -195,12 +274,14 @@ function renderModelSelect() {
 
     const models = p.models.length ? p.models : ['（未填模型名）'];
     for (const m of models) {
-      const active = !!(
-        state.selectedModel &&
-        state.selectedModel.providerId === p.id &&
-        state.selectedModel.model === m
-      );
-      if (active) hasMatch = true;
+      const targetIndex = targets.findIndex((t) => t.providerId === p.id && t.model === m);
+      const active = comparing
+        ? targetIndex !== -1
+        : !!(
+            state.selectedModel &&
+            state.selectedModel.providerId === p.id &&
+            state.selectedModel.model === m
+          );
 
       const item = document.createElement('button');
       item.type = 'button';
@@ -219,13 +300,23 @@ function renderModelSelect() {
 
       item.append(icon, name);
       if (active) {
-        const check = document.createElement('span');
-        check.className = 'menu-check';
-        check.innerHTML = CHECK_SVG;
-        item.appendChild(check);
+        const mark = document.createElement('span');
+        if (comparing) {
+          mark.className = 'menu-badge';
+          mark.textContent = targetIndex === 0 ? 'A' : 'B';
+        } else {
+          mark.className = 'menu-check';
+          mark.innerHTML = CHECK_SVG;
+        }
+        item.appendChild(mark);
       }
       item.addEventListener('click', (e) => {
         e.stopPropagation();
+        if (comparing) {
+          // 对比模式下保持菜单打开，方便连续选两个模型
+          toggleCompareTarget({ providerId: p.id, model: m });
+          return;
+        }
         state.selectedModel = { providerId: p.id, model: m };
         persist();
         closeModelMenu();
@@ -245,6 +336,14 @@ function renderModelSelect() {
     openSettings('api');
   });
   menu.appendChild(foot);
+
+  if (comparing) {
+    if (!targets.length) label.textContent = '对比：选择两个模型…';
+    else if (targets.length === 1) label.textContent = `${targets[0].model} vs ？`;
+    else label.textContent = `${targets[0].model} vs ${targets[1].model}`;
+    dot.classList.toggle('on', targets.length > 0 && targets.every((t) => resolveTarget(t)));
+    return;
+  }
 
   if (state.selectedModel) {
     label.textContent = state.selectedModel.model;
@@ -289,7 +388,7 @@ function renderEmptyState() {
     wrap.innerHTML = `
       <div class="es-mark"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 6h16v10H8l-4 4V6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
       <h3>开始新对话</h3>
-      <p>输入消息开始聊天，可附带图片与文档；顶部可随时切换模型。</p>`;
+      <p>输入消息开始聊天，可附带图片与文档；顶部可切换模型或开启对比模式。</p>`;
   }
   box.appendChild(wrap);
 }
@@ -352,6 +451,71 @@ function renderDocPart(part) {
   return box;
 }
 
+/** 回复头：AI 标签 +（已知时）产出它的模型 */
+function renderRoleHead(msg) {
+  const head = document.createElement('div');
+  head.className = 'role-head';
+  const label = document.createElement('span');
+  label.className = 'role-label';
+  label.textContent = 'AI';
+  head.appendChild(label);
+  if (msg.model) {
+    const provider = providerById(msg.model.providerId);
+    if (provider) {
+      const dot = document.createElement('span');
+      dot.className = 'branch-dot';
+      dot.style.background = providerColor(provider.id);
+      head.appendChild(dot);
+    }
+    const name = document.createElement('span');
+    name.className = 'branch-model';
+    name.textContent = msg.model.model;
+    name.title = provider ? `${provider.name} · ${msg.model.model}` : msg.model.model;
+    head.appendChild(name);
+  }
+  return head;
+}
+
+function usageItem(text, className = '') {
+  const span = document.createElement('span');
+  span.className = 'u-item' + (className ? ' ' + className : '');
+  span.textContent = text;
+  return span;
+}
+
+/** 回复页脚：token 用量、费用估算与耗时 */
+function renderUsageFoot(msg) {
+  const foot = document.createElement('div');
+  foot.className = 'usage-foot';
+  const u = msg.usage;
+
+  if (u) {
+    const approx = u.estimated ? '≈' : '';
+    foot.append(
+      usageItem(`提示 ${approx}${formatTokens(u.promptTokens)}`),
+      usageItem(`输出 ${approx}${formatTokens(u.completionTokens)}`),
+      usageItem(`合计 ${approx}${formatTokens(u.totalTokens)}`)
+    );
+    const price = resolvePrice(providerById(msg.model && msg.model.providerId), msg.model && msg.model.model);
+    if (price) {
+      const item = usageItem(formatCost(computeCost(u, price).total), 'u-cost');
+      item.title =
+        price.source === 'provider'
+          ? '按该服务配置的单价估算'
+          : '按内置参考价估算（可能已过时），可在 API 服务设置中覆盖';
+      foot.appendChild(item);
+    }
+    foot.title = u.estimated
+      ? '接口未返回 usage，此处按字符数粗略估算（图片按固定值计）'
+      : '用量来自接口返回的 usage 字段';
+  }
+
+  if (typeof msg.ms === 'number') {
+    foot.appendChild(usageItem(`用时 ${(msg.ms / 1000).toFixed(1)}s`, 'u-time'));
+  }
+  return foot;
+}
+
 function renderMessageEl(msg) {
   const el = document.createElement('article');
   el.className = `msg ${msg.role}`;
@@ -382,9 +546,7 @@ function renderMessageEl(msg) {
   }
 
   // assistant（可能带错误标记）
-  const label = document.createElement('div');
-  label.className = 'role-label';
-  label.textContent = 'AI';
+  const label = renderRoleHead(msg);
 
   const text = msg.content.map((p) => (p.type === 'text' ? p.text : '')).join('');
 
@@ -412,6 +574,7 @@ function renderMessageEl(msg) {
     prose.classList.add('stream-cursor');
   }
   el.append(label, prose);
+  if (msg.usage || typeof msg.ms === 'number') el.appendChild(renderUsageFoot(msg));
   return el;
 }
 
@@ -427,10 +590,29 @@ function renderMessages({ keepScroll = false } = {}) {
   box.innerHTML = '';
   const col = document.createElement('div');
   col.className = 'msg-col';
-  for (const msg of session.messages) col.appendChild(renderMessageEl(msg));
+  const groups = store.groupMessages(session.messages);
+  let hasCompareRow = false;
+  for (const group of groups) {
+    if (group.length > 1) {
+      hasCompareRow = true;
+      col.appendChild(renderCompareRow(group));
+    } else {
+      col.appendChild(renderMessageEl(group[0]));
+    }
+  }
+  if (hasCompareRow) col.classList.add('compare');
   box.appendChild(col);
   $('#topbar-title').textContent = session.title;
   if (!keepScroll || nearBottom) box.scrollTop = box.scrollHeight;
+}
+
+/** 同一批对比回复左右分栏展示 */
+function renderCompareRow(messages) {
+  const row = document.createElement('div');
+  row.className = 'compare-row';
+  row.style.setProperty('--cols', String(messages.length));
+  for (const msg of messages) row.appendChild(renderMessageEl(msg));
+  return row;
 }
 
 function renderAll() {
@@ -457,6 +639,14 @@ function validateSend() {
   if (readingAttachments > 0) return '附件正在解析中，请稍候';
   if (!hasSendableContent()) return '请输入消息或添加图片/文档';
   if (!state.providers.length) return '请先添加 API 服务';
+  if (compareEnabled()) {
+    const targets = compareTargets();
+    if (targets.length < store.MAX_COMPARE_TARGETS) {
+      return `对比模式需要选择 ${store.MAX_COMPARE_TARGETS} 个模型（当前 ${targets.length} 个）`;
+    }
+    if (!sendTargets().targets.length) return '对比模式所选服务已不存在，请重新选择';
+    return null;
+  }
   if (!state.selectedModel) return '请选择模型';
   const p = selectedProvider();
   if (!p) return '所选服务不存在，请重新选择';
@@ -496,34 +686,61 @@ async function send() {
   await generate();
 }
 
-async function generate() {
-  const session = store.getActiveSession(state);
-  const provider = selectedProvider();
-  if (!session || !provider || !state.selectedModel) return;
+/** 消息里是否含有实际内容（用于跳过流式占位与空回复） */
+function hasContent(msg) {
+  return (msg.content || []).some((p) => p.type !== 'text' || (p.text || '').trim());
+}
 
-  const assistant = store.addMessage(state, session.id, {
-    role: 'assistant',
-    content: [{ type: 'text', text: '' }],
-  });
+/**
+ * 组装某个分支要发出的历史消息。
+ * 对比模式下每个分支只看得到「用户消息 + 自己的历史回复」，
+ * 避免互相参考对方答案而失去可比性；非对比模式则使用完整历史。
+ */
+function buildApiMessages(session, target, comparing) {
+  return session.messages
+    .filter((m) => {
+      if (m.error || !hasContent(m)) return false;
+      if (!comparing) return true;
+      if (m.role !== 'assistant') return true;
+      if (!m.model) return true; // 非对比模式产生的回复，视为共享上下文
+      return m.model.providerId === target.provider.id && m.model.model === target.model;
+    })
+    .map((m) => ({ role: m.role, content: m.content }));
+}
+
+/** 为每个目标创建占位回复（对比模式下共享同一 batchId，便于分栏渲染） */
+function startBranches(session, targets) {
+  const comparing = targets.length > 1;
+  const batchId = comparing ? store.uid() : null;
+  const specs = targets.map((target) => ({
+    target,
+    message: store.addMessage(state, session.id, {
+      role: 'assistant',
+      content: [{ type: 'text', text: '' }],
+      model: { providerId: target.provider.id, model: target.model },
+      ...(batchId ? { batchId } : {}),
+    }),
+  }));
   persist();
   renderMessages({ keepScroll: true });
+  return { specs, comparing };
+}
 
-  setStreamingUI(true);
-  abortCtrl = new AbortController();
+/** 跑一个分支的流式生成，结束时写入正文、用量与耗时 */
+async function runBranch({ session, spec, controller, started }) {
+  const { provider, model } = spec.target;
+  const msgId = spec.message.id;
+  const apiMessages = spec.apiMessages;
+  const promptEstimate = estimateApiTokens(apiMessages.map(toApiMessage));
 
-  const apiMessages = session.messages
-    .filter((m) => !m.error && m.id !== assistant.id)
-    .map((m) => ({ role: m.role, content: m.content }));
-
-  const col = $('#messages').querySelector('.msg-col');
-  const msgEl = col ? col.querySelector(`[data-id="${assistant.id}"]`) : null;
-  const prose = msgEl ? msgEl.querySelector('.prose') : null;
-
+  let lastPaint = 0;
   const paint = (full) => {
+    const el = $('#messages').querySelector(`[data-id="${msgId}"]`);
+    const prose = el ? el.querySelector('.prose') : null;
     if (!prose) return;
     const now = Date.now();
-    if (now - lastRenderAt < 40) return;
-    lastRenderAt = now;
+    if (now - lastPaint < 40) return;
+    lastPaint = now;
     prose.innerHTML = renderMarkdown(full, hljs);
     addCodeCopyButtons(prose);
     const box = $('#messages');
@@ -532,65 +749,112 @@ async function generate() {
     }
   };
 
+  let full = '';
+  let failure = null;
+  let aborted = false;
+  let apiUsage = null;
+
   try {
     const result = await streamChat({
       provider,
-      model: state.selectedModel.model,
+      model,
       messages: apiMessages,
-      signal: abortCtrl.signal,
-      onDelta: (_delta, full) => paint(full),
-      onDone: (full) => {
-        if (full) {
-          const m = store.updateMessage(state, session.id, assistant.id, {
-            content: [{ type: 'text', text: full }],
-          });
-          if (m) persist();
-        }
+      signal: controller.signal,
+      onDelta: (_delta, text) => {
+        full = text;
+        paint(text);
+      },
+      onDone: (text) => {
+        full = text || full;
       },
     });
-    if (result.aborted) {
-      toast('已停止生成');
-    }
+    full = result.text || full;
+    apiUsage = result.usage || null;
+    aborted = result.aborted;
   } catch (e) {
-    const msg =
-      e && e.name === 'AbortError'
-        ? null
-        : (e && e.message) || String(e);
-    if (msg) {
-      store.updateMessage(state, session.id, assistant.id, {
-        content: [{ type: 'text', text: msg }],
-        error: true,
-      });
-      persist();
-    }
-  } finally {
-    // 若从未产生任何文本，移除空的占位消息，避免对话里出现空气泡
-    const s = store.getActiveSession(state);
-    if (s) {
-      const idx = s.messages.findIndex((m) => m.id === assistant.id);
-      if (idx !== -1) {
-        const m = s.messages[idx];
-        const t = m.content.map((c) => c.text || '').join('');
-        if (!t && !m.error) {
-          s.messages.splice(idx, 1);
-          persist();
-        }
-      }
-    }
-    setStreamingUI(false);
-    abortCtrl = null;
-    renderMessages({ keepScroll: true });
-    renderSessions();
+    if (e && e.name === 'AbortError') aborted = true;
+    else failure = (e && e.message) || String(e);
   }
+
+  const s = store.getActiveSession(state);
+  if (!s) return { aborted };
+  const ms = Date.now() - started;
+
+  if (failure) {
+    store.updateMessage(state, s.id, msgId, {
+      content: [{ type: 'text', text: failure }],
+      error: true,
+    });
+  } else if (!full.trim()) {
+    store.removeMessage(state, s.id, msgId); // 无任何产出，避免留下空气泡
+  } else {
+    store.updateMessage(state, s.id, msgId, {
+      content: [{ type: 'text', text: full }],
+      ms,
+      usage: usageToRecord(apiUsage, {
+        promptTokens: promptEstimate,
+        completionTokens: estimateTokens(full),
+      }),
+    });
+  }
+  persist();
+  return { aborted };
+}
+
+/** 并行执行若干分支，并统一收尾 */
+async function runBranches({ session, specs }) {
+  setStreamingUI(true);
+  controllers = specs.map(() => new AbortController());
+  const started = Date.now();
+  const outcomes = await Promise.all(
+    specs.map((spec, i) => runBranch({ session, spec, controller: controllers[i], started }))
+  );
+  controllers = [];
+  setStreamingUI(false);
+  if (outcomes.some((o) => o && o.aborted)) toast('已停止生成');
+  renderMessages({ keepScroll: true });
+  renderSessions();
+}
+
+async function generate() {
+  const session = store.getActiveSession(state);
+  if (!session) return;
+  const { comparing, targets } = sendTargets();
+  if (!targets.length) return;
+
+  const { specs } = startBranches(session, targets);
+  for (const spec of specs) {
+    spec.apiMessages = buildApiMessages(session, spec.target, comparing);
+  }
+  await runBranches({ session, specs });
 }
 
 async function retryFrom(errorMsgId) {
   if (streaming) return;
   const session = store.getActiveSession(state);
   if (!session) return;
+  const msg = session.messages.find((m) => m.id === errorMsgId);
+  if (!msg) return;
+
+  // 对比模式的分支：只重跑这一条，其他分支与历史保持不变
+  if (msg.batchId && msg.model) {
+    const provider = providerById(msg.model.providerId);
+    if (!provider) {
+      toast('原服务已删除，无法重试', 'error');
+      return;
+    }
+    store.resetMessage(state, session.id, msg.id);
+    persist();
+    renderMessages({ keepScroll: true });
+    const target = { provider, model: msg.model.model };
+    const spec = { target, message: msg, apiMessages: buildApiMessages(session, target, true) };
+    await runBranches({ session, specs: [spec] });
+    return;
+  }
+
+  // 单模型：移除错误消息与其前的最后一条用户消息后重新发送
   const idx = session.messages.findIndex((m) => m.id === errorMsgId);
   if (idx === -1) return;
-  // 移除错误消息及其之前的最后一条用户消息，重新发送
   session.messages.splice(idx, 1);
   let lastUserIdx = -1;
   for (let i = session.messages.length - 1; i >= 0; i--) {
@@ -601,7 +865,6 @@ async function retryFrom(errorMsgId) {
   }
   const userMsg = lastUserIdx !== -1 ? session.messages[lastUserIdx] : null;
   if (userMsg) {
-    // 从历史中移除该用户消息，generate 会重新添加 AI 回复；直接重新走完整发送
     session.messages.splice(lastUserIdx, 1);
     store.addMessage(state, session.id, { role: userMsg.role, content: userMsg.content });
   }
@@ -611,7 +874,7 @@ async function retryFrom(errorMsgId) {
 }
 
 function stop() {
-  if (abortCtrl) abortCtrl.abort();
+  for (const c of controllers) c.abort();
 }
 
 // ---------- 附件 ----------
@@ -891,6 +1154,8 @@ function resetProviderForm() {
   $('#pf-apiKey').value = '';
   $('#pf-models').value = '';
   $('#pf-proxyUrl').value = '';
+  $('#pf-priceInput').value = '';
+  $('#pf-priceOutput').value = '';
   $('#btn-del-provider').classList.add('hidden');
   renderProviderList();
   $('#pf-name').focus();
@@ -906,8 +1171,23 @@ function fillProviderForm(id) {
   $('#pf-apiKey').value = p.apiKey;
   $('#pf-models').value = p.models.join('\n');
   $('#pf-proxyUrl').value = p.proxyUrl || '';
+  $('#pf-priceInput').value = p.price ? String(p.price.input) : '';
+  $('#pf-priceOutput').value = p.price ? String(p.price.output) : '';
   $('#btn-del-provider').classList.remove('hidden');
   renderProviderList();
+}
+
+/** 读取单价输入：两者都空视为未配置，只填一半则报错 */
+function readPriceInputs() {
+  const rawInput = $('#pf-priceInput').value.trim();
+  const rawOutput = $('#pf-priceOutput').value.trim();
+  if (!rawInput && !rawOutput) return { price: null };
+  const input = numOrNull(rawInput);
+  const output = numOrNull(rawOutput);
+  if (input === null || output === null || input < 0 || output < 0) {
+    return { error: '单价需填写两个非负数字，或两者都留空' };
+  }
+  return { price: { input, output } };
 }
 
 function saveProviderForm(e) {
@@ -923,6 +1203,11 @@ function saveProviderForm(e) {
     toast('Base URL 需以 http(s):// 开头', 'error');
     return;
   }
+  const priceResult = readPriceInputs();
+  if (priceResult.error) {
+    toast(priceResult.error, 'error');
+    return;
+  }
   const models = $('#pf-models').value
     .split(/[\n,]/)
     .map((s) => s.trim())
@@ -935,6 +1220,7 @@ function saveProviderForm(e) {
     apiKey: $('#pf-apiKey').value,
     models,
     proxyUrl: $('#pf-proxyUrl').value.trim(),
+    price: priceResult.price,
   });
   persist();
 
@@ -997,6 +1283,7 @@ function bind() {
     closeModelMenu();
     openSettings('api');
   });
+  $('#btn-compare-toggle').addEventListener('click', toggleCompare);
   $('#model-select').addEventListener('click', (e) => {
     e.stopPropagation();
     if (!state.providers.length) {
@@ -1075,6 +1362,7 @@ function init() {
   renderAll();
   renderAttachments();
   renderThemeOptions();
+  renderCompareUI();
   autoGrow();
 }
 

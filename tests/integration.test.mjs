@@ -64,6 +64,27 @@ test('streamChat 端到端：网络不可达给出可读错误', async () => {
   );
 });
 
+test('streamChat 端到端：流式响应也能拿到 usage', async () => {
+  const result = await streamChat({
+    provider: { baseUrl, apiKey: 'ok' },
+    model: 'mock-model',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  });
+  assert.deepEqual(result.usage, { prompt_tokens: 42, completion_tokens: 108, total_tokens: 150 });
+  assert.ok(result.text.includes('# 模拟回复 (mock-model)'));
+});
+
+test('streamChat 端到端：请求带 stream_options，服务端不回 usage 时为 null', async () => {
+  const result = await streamChat({
+    provider: { baseUrl, apiKey: 'ok' },
+    model: 'mock-nousage',
+    messages: [{ role: 'user', content: [{ type: 'text', text: 'hi' }] }],
+  });
+  assert.equal(result.usage, null);
+  const last = await fetch(baseUrl.replace(/\/v1$/, '') + '/last-request').then((r) => r.json());
+  assert.deepEqual(last.stream_options, { include_usage: true });
+});
+
 test('buildEndpoint 与 mock 实际地址一致', () => {
   assert.equal(buildEndpoint({ baseUrl }), `${baseUrl}/chat/completions`);
 });

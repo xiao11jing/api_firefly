@@ -518,6 +518,22 @@ button { font-family: inherit; cursor: pointer; }
   flex-shrink: 0;
 }
 
+/* 对比模式下模型项的 A/B 标记 */
+.menu-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 6px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  flex-shrink: 0;
+}
+
 .model-menu-foot {
   display: flex;
   align-items: center;
@@ -580,6 +596,30 @@ button { font-family: inherit; cursor: pointer; }
   text-align: left;
 }
 
+/* 顶栏右侧：对比模式开关 */
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 30px;
+  padding: 0 11px;
+  flex-shrink: 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 12.5px;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
+}
+.mode-toggle svg { flex-shrink: 0; }
+.mode-toggle:hover { color: var(--ink); border-color: var(--pill-hover-border); }
+.mode-toggle.active {
+  background: var(--accent-soft);
+  border-color: var(--accent-border);
+  color: var(--accent-strong);
+}
+
 /* ---------- 消息区 ---------- */
 .messages {
   flex: 1;
@@ -600,6 +640,17 @@ button { font-family: inherit; cursor: pointer; }
 .msg.user { align-items: flex-end; }
 .msg.assistant { align-items: flex-start; }
 
+/* 对比模式：同一批回复左右分栏 */
+.msg-col.compare { max-width: 1180px; }
+
+.compare-row {
+  display: grid;
+  grid-template-columns: repeat(var(--cols, 2), minmax(0, 1fr));
+  gap: 16px;
+}
+.compare-row .msg { align-items: stretch; min-width: 0; }
+.compare-row .prose { min-width: 0; }
+
 .msg .role-label {
   font-size: 11px;
   color: var(--faint);
@@ -607,6 +658,47 @@ button { font-family: inherit; cursor: pointer; }
   letter-spacing: 0.4px;
   text-transform: uppercase;
 }
+
+/* 回复头：AI + 产出它的模型 */
+.role-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 5px;
+}
+.msg .role-head .role-label { margin-bottom: 0; }
+.branch-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.branch-model {
+  font-size: 11.5px;
+  color: var(--muted);
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 回复页脚：用量 / 费用 / 耗时 */
+.usage-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px 0;
+  margin-top: 7px;
+  font-size: 11px;
+  color: var(--faint);
+}
+.usage-foot .u-item { white-space: nowrap; }
+.usage-foot .u-item + .u-item::before {
+  content: "·";
+  margin: 0 8px;
+  color: var(--border-strong);
+}
+.usage-foot .u-cost { color: var(--muted); }
 
 .bubble {
   max-width: min(92%, 680px);
@@ -1191,6 +1283,12 @@ button { font-family: inherit; cursor: pointer; }
 .settings-form { padding: 16px 18px; }
 
 .field { display: block; margin-bottom: 13px; }
+
+.field-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
 .field > span {
   display: block;
   font-size: 12px;
@@ -1327,4 +1425,8 @@ button { font-family: inherit; cursor: pointer; }
   .theme-options { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   .modal-mask { padding: 12px; }
   .settings-tabs { overflow-x: auto; }
+  .compare-row { grid-template-columns: 1fr; }
+  .field-row { grid-template-columns: 1fr; }
+  .mode-toggle span { display: none; }
+  .mode-toggle { padding: 0 9px; }
 }

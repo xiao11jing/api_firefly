@@ -5,6 +5,7 @@
 import { chromium } from 'playwright-core';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { MOCK_VERSION } from './mock-server.mjs';
 
 const APP = process.env.APP_URL || 'http://127.0.0.1:8800';
 const MOCK = process.env.MOCK_URL || 'http://127.0.0.1:8717';
@@ -36,6 +37,18 @@ const PDF_PATH = join(import.meta.dirname, 'fixtures', 'sample.pdf');
 const consoleErrors = [];
 const pageErrors = [];
 
+// 常驻的 mock 进程可能是改动前的旧代码，先核对版本，避免出现难以定位的断言失败
+const health = await fetch(`${MOCK}/health`)
+  .then((r) => (r.ok ? r.json() : null))
+  .catch(() => null);
+if (!health || health.version !== MOCK_VERSION) {
+  console.error(
+    `mock server 版本不匹配（期望 ${MOCK_VERSION}，实际 ${health ? health.version : '不可达'}）。` +
+      '请重启：npm run mock'
+  );
+  process.exit(1);
+}
+
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 page.on('console', (m) => {
@@ -61,7 +74,10 @@ try {
   await page.fill('#pf-name', 'Mock 服务');
   await page.fill('#pf-baseUrl', `${MOCK}/v1`);
   await page.fill('#pf-apiKey', 'test-key');
-  await page.fill('#pf-models', 'mock-model');
+  await page.fill('#pf-models', 'mock-model\nmock-alt\nmock-nousage');
+  // 单价覆盖：验证费用估算走用户配置而不是内置参考价
+  await page.fill('#pf-priceInput', '2');
+  await page.fill('#pf-priceOutput', '8');
   await page.getByRole('button', { name: '保存' }).click();
   check('保存后服务出现在列表', (await page.locator('.provider-item').count()) === 1);
   await page.locator('#settings-mask .provider-item').waitFor();
@@ -78,7 +94,7 @@ try {
   await page.locator('#model-menu:not(.hidden)').waitFor({ timeout: 3000 });
   await page.waitForTimeout(300); // 等入场动画结束再断言/截图
   check('菜单按服务分组', (await page.locator('#model-menu .menu-group').first().textContent()) === 'Mock 服务');
-  check('菜单列出模型项', (await page.locator('#model-menu .menu-item').count()) === 1);
+  check('菜单列出模型项', (await page.locator('#model-menu .menu-item').count()) === 3);
   check('当前模型高亮', (await page.locator('#model-menu .menu-item.active').count()) === 1);
   check('选中项带勾选图标', (await page.locator('#model-menu .menu-check').count()) === 1);
   check('菜单底部有配置入口', await page.locator('.model-menu-foot').isVisible());
@@ -103,6 +119,10 @@ try {
   check('代码块带复制按钮', (await page.locator('.prose .code-copy').count()) >= 1);
   check('回复包含列表', html.includes('<ul>'));
   check('会话自动命名', (await page.locator('.session-item .s-title').first().textContent()) === '你好，这是端到端测试');
+  const singleFoot = await page.locator('.msg.assistant .usage-foot').textContent();
+  check('单模型回复显示实测用量', singleFoot.includes('提示 42') && singleFoot.includes('输出 108') && singleFoot.includes('合计 150'), singleFoot);
+  check('按服务配置单价估算费用', singleFoot.includes('$0.0009'), singleFoot);
+  check('页脚显示耗时', /用时 \d+\.\ds/.test(singleFoot), singleFoot);
   await page.screenshot({ path: join(OUT, '03-chat.png') });
 
   // ---------- 5. 刷新后持久化 ----------
@@ -197,7 +217,67 @@ try {
   await page.click('#btn-attach-clear');
   check('清空后恢复可添加', !(await page.locator('#btn-attach').isDisabled()));
 
-  // ---------- 7. 错误处理（bad key → 401） ----------
+  // ---------- 7. 对比模式：同一条消息并行发给两个模型，左右分栏 ----------
+  await page.click('#btn-compare-toggle');
+  check('对比开关进入激活态', (await page.locator('#btn-compare-toggle').getAttribute('aria-pressed')) === 'true');
+  check('开启后自动带入当前模型', (await page.locator('#model-label').textContent()).includes('mock-model vs ？'));
+
+  await page.click('#model-select');
+  await page.locator('#model-menu:not(.hidden)').waitFor();
+  check('已选模型标注 A', (await page.locator('#model-menu .menu-badge').first().textContent()) === 'A');
+  await page.locator('#model-menu .menu-item', { hasText: 'mock-alt' }).click();
+  check('两个模型时标注 A/B', (await page.locator('#model-menu .menu-badge').count()) === 2);
+  check('胶囊显示两个模型', (await page.locator('#model-label').textContent()).includes('mock-model vs mock-alt'));
+
+  await page.locator('#model-menu .menu-item', { hasText: 'mock-nousage' }).click();
+  await page.waitForSelector('#toast.error', { timeout: 3000 });
+  check('最多只能选两个模型', (await page.locator('#toast').textContent()).includes('最多 2 个模型'));
+  await page.keyboard.press('Escape');
+  await page.waitForFunction(() => document.querySelector('#model-menu').classList.contains('hidden'));
+
+  await page.fill('#input', '对比一下这两个模型');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.compare-row', { timeout: 10000 });
+  check('回复以左右分栏呈现', (await page.locator('.compare-row').count()) === 1);
+  check('分栏内为两条回复', (await page.locator('.compare-row > .msg.assistant').count()) === 2);
+  await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
+
+  const branchModels = await page.locator('.compare-row .branch-model').allTextContents();
+  check('两栏分别标注模型名', branchModels.join(',') === 'mock-model,mock-alt', branchModels.join(','));
+  const cols = await page.locator('.compare-row .prose').allInnerTexts();
+  check(
+    '两栏内容各自独立',
+    cols[0].includes('(mock-model)') && cols[1].includes('(mock-alt)'),
+    cols.map((c) => c.slice(0, 18)).join(' | ')
+  );
+  const branchFoots = await page.locator('.compare-row .usage-foot').allTextContents();
+  check('两栏各自显示用量与费用', branchFoots.every((f) => f.includes('提示 42') && f.includes('合计 150') && f.includes('$0.0009')), branchFoots.join(' | '));
+
+  // 报文层面确认两个模型分支拿到的是同一轮用户消息
+  const cmpReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  check('对比分支的模型名已透传', ['mock-model', 'mock-alt'].includes(cmpReq.model), String(cmpReq.model));
+  check('对比分支请求仍带 stream_options', JSON.stringify(cmpReq.stream_options) === '{"include_usage":true}');
+  await page.screenshot({ path: join(OUT, '08-compare.png') });
+
+  // ---------- 7b. 接口不回传 usage 时回退为估算 ----------
+  await page.click('#btn-compare-toggle');
+  check('可关闭对比模式', (await page.locator('#btn-compare-toggle').getAttribute('aria-pressed')) === 'false');
+  await page.click('#model-select');
+  await page.locator('#model-menu:not(.hidden)').waitFor();
+  await page.locator('#model-menu .menu-item', { hasText: 'mock-nousage' }).click();
+  await page.waitForFunction(() => document.querySelector('#model-menu').classList.contains('hidden'));
+
+  await page.click('#btn-new-chat');
+  await page.fill('#input', '这次接口不回传用量');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 30000 });
+  const estFoot = await page.locator('.msg.assistant .usage-foot').textContent();
+  check('无 usage 时回退为估算值', estFoot.includes('≈'), estFoot);
+  check('估算值不再等于接口固定值', !estFoot.includes('提示 42'), estFoot);
+  check('估算值随内容量变化', /输出 ≈\d{2,}/.test(estFoot), estFoot);
+  await page.screenshot({ path: join(OUT, '09-usage-estimate.png') });
+
+  // ---------- 8. 错误处理（bad key → 401） ----------
   await page.click('#btn-pill-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.locator('.provider-item').first().click();
