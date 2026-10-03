@@ -31,10 +31,6 @@
         <button class="icon-btn only-mobile" id="btn-toggle-sidebar" title="菜单" aria-label="菜单">
           <svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
         </button>
-        <div class="model-pill" title="当前模型">
-          <span class="model-dot" id="model-dot"></span>
-          <select id="model-select" class="model-select" aria-label="选择模型"></select>
-        </div>
         <div class="topbar-title" id="topbar-title">新会话</div>
       </header>
 
@@ -53,6 +49,10 @@
             <svg viewBox="0 0 16 16" width="17" height="17"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5.5" cy="6.5" r="1.4" fill="currentColor"/><path d="M2.5 12l3.6-3.6a1 1 0 0 1 1.4 0L11 12m.5-1.5 1.2-1.2a1 1 0 0 1 1.4 0l.9.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
           </button>
           <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息输入框"></textarea>
+          <div class="model-pill" title="当前模型">
+            <span class="model-dot" id="model-dot"></span>
+            <select id="model-select" class="model-select" aria-label="选择模型"></select>
+          </div>
           <button class="send-btn" id="btn-send" title="发送">
             <svg viewBox="0 0 16 16" width="15" height="15"><path d="M2 8l11.5-5.5L11 13l-2.4-3.6L2 8Zm6.6 1.4L11 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
             <span>发送</span>

@@ -214,10 +214,11 @@ button { font-family: inherit; cursor: pointer; }
   align-items: center;
   gap: 8px;
   padding: 0 10px;
-  height: 32px;
+  height: 34px;
+  flex-shrink: 0;
   border: 1px solid var(--border-strong);
   border-radius: 999px;
-  background: var(--surface);
+  background: var(--bg);
 }
 
 .model-dot {
@@ -252,7 +253,7 @@ button { font-family: inherit; cursor: pointer; }
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  text-align: right;
+  text-align: left;
 }
 
 /* ---------- 消息区 ---------- */
