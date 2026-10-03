@@ -104,7 +104,7 @@ try {
   await page.screenshot({ path: join(OUT, '04-image.png') });
 
   // ---------- 7. 错误处理（bad key → 401） ----------
-  await page.click('#btn-settings');
+  await page.click('#btn-pill-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.locator('.provider-item').first().click();
   await page.fill('#pf-apiKey', 'bad-key');

@@ -127,18 +127,21 @@ function startRename(item, session, titleEl) {
 function renderModelSelect() {
   const sel = $('#model-select');
   const dot = $('#model-dot');
+  const pill = $('#model-pill');
   sel.innerHTML = '';
 
   if (!state.providers.length) {
     const opt = document.createElement('option');
     opt.value = '';
-    opt.textContent = '先在设置中添加 API 服务';
+    opt.textContent = '配置 API 服务';
     sel.appendChild(opt);
     sel.disabled = true;
     dot.classList.remove('on');
+    pill.classList.add('attention');
     return;
   }
   sel.disabled = false;
+  pill.classList.remove('attention');
 
   const placeholder = document.createElement('option');
   placeholder.value = '';
@@ -659,7 +662,11 @@ function bind() {
     $('#input').focus();
   });
 
-  $('#btn-settings').addEventListener('click', openSettings);
+  $('#btn-pill-settings').addEventListener('click', openSettings);
+  $('#model-pill').addEventListener('click', (e) => {
+    // 未配置任何服务时，点击胶囊任意位置都可进入设置
+    if (!state.providers.length && e.target.id !== 'model-select') openSettings();
+  });
   $('#btn-close-settings').addEventListener('click', closeSettings);
   $('#settings-mask').addEventListener('click', (e) => {
     if (e.target === $('#settings-mask')) closeSettings();
