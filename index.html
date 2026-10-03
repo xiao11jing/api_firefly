@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>AI Chat · 多模型对话</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-head">
+        <div class="brand"><span class="brand-mark"></span><span>AI Chat</span></div>
+        <button class="icon-btn" id="btn-new-chat" title="新会话" aria-label="新会话">
+          <svg viewBox="0 0 16 16" width="16" height="16"><path d="M8 3v10M3 8h10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <nav class="session-list" id="session-list" aria-label="会话列表"></nav>
+      <div class="sidebar-foot">
+        <button class="ghost-btn" id="btn-settings">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M8 10.2A2.2 2.2 0 1 0 8 5.8a2.2 2.2 0 0 0 0 4.4Z" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M13.3 9.6a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.66 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.66h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.66 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.66h-.06a1.1 1.1 0 0 0-1 .67Z" fill="none" stroke="currentColor" stroke-width="1.1"/></svg>
+          <span>设置</span>
+        </button>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <button class="icon-btn only-mobile" id="btn-toggle-sidebar" title="菜单" aria-label="菜单">
+          <svg viewBox="0 0 16 16" width="16" height="16"><path d="M2.5 4.5h11M2.5 8h11M2.5 11.5h11" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+        <div class="model-pill" title="当前模型">
+          <span class="model-dot" id="model-dot"></span>
+          <select id="model-select" class="model-select" aria-label="选择模型"></select>
+        </div>
+        <div class="topbar-title" id="topbar-title">新会话</div>
+      </header>
+
+      <section class="messages" id="messages" aria-live="polite"></section>
+
+      <section class="composer-area">
+        <div class="attach-preview hidden" id="attach-preview">
+          <img id="attach-thumb" alt="附件预览">
+          <span class="attach-name" id="attach-name"></span>
+          <button class="icon-btn" id="btn-attach-remove" title="移除附件" aria-label="移除附件">
+            <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+        <div class="composer">
+          <button class="icon-btn composer-tool" id="btn-attach" title="发送图片" aria-label="发送图片">
+            <svg viewBox="0 0 16 16" width="17" height="17"><rect x="1.5" y="2.5" width="13" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="5.5" cy="6.5" r="1.4" fill="currentColor"/><path d="M2.5 12l3.6-3.6a1 1 0 0 1 1.4 0L11 12m.5-1.5 1.2-1.2a1 1 0 0 1 1.4 0l.9.9" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
+          </button>
+          <textarea id="input" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行" aria-label="消息输入框"></textarea>
+          <button class="send-btn" id="btn-send" title="发送">
+            <svg viewBox="0 0 16 16" width="15" height="15"><path d="M2 8l11.5-5.5L11 13l-2.4-3.6L2 8Zm6.6 1.4L11 13" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>
+            <span>发送</span>
+          </button>
+          <button class="send-btn stop hidden" id="btn-stop" title="停止生成">
+            <svg viewBox="0 0 16 16" width="12" height="12"><rect x="4" y="4" width="8" height="8" rx="1" fill="currentColor"/></svg>
+            <span>停止</span>
+          </button>
+        </div>
+        <div class="composer-hint">AI 生成的内容可能有误，请注意甄别 · API Key 仅保存在本地浏览器</div>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-mask hidden" id="settings-mask">
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+      <div class="modal-head">
+        <h2 id="settings-title">设置 · API 服务</h2>
+        <button class="icon-btn" id="btn-close-settings" title="关闭" aria-label="关闭">
+          <svg viewBox="0 0 16 16" width="14" height="14"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
+      </div>
+      <div class="modal-body settings-grid">
+        <div class="settings-list">
+          <button class="ghost-btn block" id="btn-add-provider">＋ 新增服务</button>
+          <div id="provider-list" class="provider-list"></div>
+        </div>
+        <form class="settings-form" id="provider-form" autocomplete="off">
+          <input type="hidden" id="pf-id">
+          <label class="field"><span>名称</span>
+            <input id="pf-name" placeholder="如 OpenAI / DeepSeek" required>
+          </label>
+          <label class="field"><span>Base URL</span>
+            <input id="pf-baseUrl" placeholder="https://api.openai.com/v1" required>
+          </label>
+          <label class="field"><span>API Key</span>
+            <input id="pf-apiKey" type="password" placeholder="sk-..." autocomplete="new-password">
+          </label>
+          <label class="field"><span>模型列表（每行一个）</span>
+            <textarea id="pf-models" rows="3" placeholder="gpt-4o-mini&#10;gpt-4o"></textarea>
+          </label>
+          <label class="field"><span>代理地址（可选）</span>
+            <input id="pf-proxyUrl" placeholder="如 http://127.0.0.1:8787/proxy/">
+          </label>
+          <p class="form-hint">
+            兼容 OpenAI Chat Completions 格式。代理地址用于解决浏览器跨域：请求地址 = 代理地址 + Base URL + /chat/completions；
+            若代理本身即为兼容端点，可直接把 Base URL 指向它。浏览器直连仅建议本地自用。
+          </p>
+          <div class="form-actions">
+            <button type="submit" class="primary-btn">保存</button>
+            <button type="button" class="danger-btn hidden" id="btn-del-provider">删除此服务</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast hidden" id="toast" role="status"></div>
+  <input type="file" id="file-input" accept="image/png,image/jpeg,image/gif,image/webp" hidden>
+
+  <script src="js/vendor/highlight.min.js"></script>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
