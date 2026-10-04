@@ -3,6 +3,7 @@
  */
 import { isPrice, normalizeUsage } from './usage.js';
 import { normalizeBgOpacity } from './background.js';
+import { DEFAULT_AI_NAME, DEFAULT_USER_NAME, defaultProfile, normalizeProfileName } from './profile.js';
 
 export const STORAGE_KEY = 'ai-multi-chat-v1';
 
@@ -29,7 +30,7 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: { theme: DEFAULT_THEME, background: null },
+    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile() },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
     promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
@@ -71,17 +72,52 @@ export function setTheme(state, theme) {
 }
 
 /**
- * 背景图只接受本地图片的 data URL：外链会被写进存储、且渲染时无法保证可达；
- * 载荷限定为 base64 字符集，这样拼进 CSS 的 url() 时不存在注入面。
+ * 本地图片 data URL：外链会被写进存储、且渲染时无法保证可达；
+ * 载荷限定为 base64 字符集，这样拼进 CSS 的 url() 或元素属性都不存在注入面。
  */
-const BACKGROUND_DATA_URL = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/i;
+const IMAGE_DATA_URL = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/i;
+
+/** 校验并返回可存储的图片 data URL；非法或缺失返回 null */
+export function normalizeImageDataUrl(value) {
+  const url = typeof value === 'string' ? value.trim() : '';
+  return IMAGE_DATA_URL.test(url) ? url : null;
+}
 
 /** 归一化背景配置；非法或缺失一律视为未设置背景 */
 export function normalizeBackground(value) {
   if (!value || typeof value !== 'object') return null;
-  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl.trim() : '';
-  if (!BACKGROUND_DATA_URL.test(dataUrl)) return null;
+  const dataUrl = normalizeImageDataUrl(value.dataUrl);
+  if (!dataUrl) return null;
   return { dataUrl, opacity: normalizeBgOpacity(value.opacity) };
+}
+
+/** 归一化单个身份（用户 / AI）的名称与头像 */
+function normalizeProfileSide(value, fallbackName) {
+  const side = value && typeof value === 'object' ? value : {};
+  return {
+    name: normalizeProfileName(side.name, fallbackName),
+    avatar: normalizeImageDataUrl(side.avatar),
+  };
+}
+
+/** 归一化个人资料；缺失或非法字段回退默认值 */
+export function normalizeProfile(value) {
+  const v = value && typeof value === 'object' ? value : {};
+  return {
+    user: normalizeProfileSide(v.user, DEFAULT_USER_NAME),
+    ai: normalizeProfileSide(v.ai, DEFAULT_AI_NAME),
+  };
+}
+
+/** 更新个人资料，patch 形如 { user: { name?, avatar? }, ai: {...} }；返回生效后的值 */
+export function updateProfile(state, patch = {}) {
+  const current = normalizeProfile(state.settings && state.settings.profile);
+  const next = normalizeProfile({
+    user: { ...current.user, ...(patch.user || {}) },
+    ai: { ...current.ai, ...(patch.ai || {}) },
+  });
+  state.settings = { ...(state.settings || {}), profile: next };
+  return next;
 }
 
 /** 设置或清除背景图（background 传 null 表示清除），返回生效后的取值 */
@@ -171,6 +207,7 @@ function normalizeState(s) {
       ...(s.settings && typeof s.settings === 'object' ? s.settings : {}),
       theme: normalizeTheme(s.settings && s.settings.theme),
       background: normalizeBackground(s.settings && s.settings.background),
+      profile: normalizeProfile(s.settings && s.settings.profile),
     },
     compare: normalizeCompare(s.compare),
     promptTemplates: Array.isArray(s.promptTemplates)

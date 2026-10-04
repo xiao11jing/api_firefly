@@ -26,6 +26,7 @@ import {
   needsReencode,
   normalizeBgOpacity,
 } from './background.js';
+import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
 import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
@@ -503,14 +504,11 @@ function renderDocPart(part) {
   return box;
 }
 
-/** 回复头：AI 标签 +（已知时）产出它的模型 */
+/** 回复头：头像 + 名称 +（已知时）产出它的模型 */
 function renderRoleHead(msg) {
   const head = document.createElement('div');
   head.className = 'role-head';
-  const label = document.createElement('span');
-  label.className = 'role-label';
-  label.textContent = 'AI';
-  head.appendChild(label);
+  head.append(renderAvatar('ai'), renderName('ai'));
   if (msg.model) {
     const provider = providerById(msg.model.providerId);
     if (provider) {
@@ -526,6 +524,35 @@ function renderRoleHead(msg) {
     head.appendChild(name);
   }
   return head;
+}
+
+/** 某个身份当前的名称与头像 */
+function profileOf(side) {
+  return store.normalizeProfile(state.settings && state.settings.profile)[side];
+}
+
+/** 消息头像：设了图片用图片，否则用名称首字占位 */
+function renderAvatar(side) {
+  const profile = profileOf(side);
+  const box = document.createElement('span');
+  box.className = 'msg-avatar';
+  if (profile.avatar) {
+    const img = document.createElement('img');
+    img.src = profile.avatar;
+    img.alt = '';
+    box.appendChild(img);
+    box.title = profile.name;
+  } else {
+    box.textContent = avatarInitial(profile.name);
+  }
+  return box;
+}
+
+function renderName(side) {
+  const span = document.createElement('span');
+  span.className = 'msg-name';
+  span.textContent = profileOf(side).name;
+  return span;
 }
 
 function usageItem(text, className = '') {
@@ -574,9 +601,9 @@ function renderMessageEl(msg) {
   el.dataset.id = msg.id;
 
   if (msg.role === 'user') {
-    const label = document.createElement('div');
-    label.className = 'role-label';
-    label.textContent = '你';
+    const head = document.createElement('div');
+    head.className = 'role-head';
+    head.append(renderAvatar('user'), renderName('user'));
 
     const bubble = document.createElement('div');
     bubble.className = 'bubble';
@@ -593,7 +620,7 @@ function renderMessageEl(msg) {
         bubble.appendChild(document.createTextNode(part.text));
       }
     }
-    el.append(label, bubble);
+    el.append(head, bubble);
     return el;
   }
 
@@ -1209,9 +1236,11 @@ function exportSession() {
     toast('当前会话还没有可导出的消息', 'error');
     return;
   }
+  const profile = store.normalizeProfile(state.settings && state.settings.profile);
   const markdown = sessionToMarkdown(session, {
     now: new Date(),
     providerName: (id) => (providerById(id) || {}).name || '',
+    profile: { user: profile.user.name, ai: profile.ai.name },
   });
   const filename = exportFilename(session);
   downloadText(filename, markdown);
@@ -1607,15 +1636,15 @@ function renderBackgroundControls() {
 
 /**
  * 超过最长边或体积上限时用画布等比缩放并重新编码为 JPEG，
- * 否则沿用原图（小图保留 PNG 透明通道）。
+ * 否则沿用原图（小图保留 PNG 透明通道）。背景图与头像共用。
  */
-function shrinkBackgroundImage(dataUrl) {
+function shrinkImage(dataUrl, maxDim, maxChars) {
   return new Promise((resolve) => {
     const img = new Image();
     img.onload = () => {
       try {
-        const { width, height, scaled } = computeScale(img.naturalWidth, img.naturalHeight, BG_MAX_DIM);
-        if (!needsReencode({ scaled, dataUrl })) {
+        const { width, height, scaled } = computeScale(img.naturalWidth, img.naturalHeight, maxDim);
+        if (!needsReencode({ scaled, dataUrl, max: maxChars })) {
           resolve(dataUrl);
           return;
         }
@@ -1651,7 +1680,7 @@ async function prepareBackground(file) {
     toast('图片读取失败', 'error');
     return null;
   }
-  const prepared = await shrinkBackgroundImage(dataUrl);
+  const prepared = await shrinkImage(dataUrl, BG_MAX_DIM, MAX_BG_DATA_URL_CHARS);
   if (isTooLargeForStorage(prepared, MAX_BG_DATA_URL_CHARS)) {
     toast('压缩后仍然过大，请换一张尺寸更小的图片', 'error');
     return null;
@@ -1659,8 +1688,60 @@ async function prepareBackground(file) {
   return prepared;
 }
 
-/** 切换设置面板：'appearance' | 'api' | 'prompt' */
-const SETTINGS_PANELS = ['appearance', 'api', 'prompt'];
+// ---------- 个人资料（用户 / AI 的名称与头像） ----------
+
+/** 头像文件选择框当前服务的身份（用户 / AI） */
+let avatarSide = 'user';
+
+function renderProfileForm() {
+  const profile = store.normalizeProfile(state.settings && state.settings.profile);
+  $('#pf-user-name').value = profile.user.name;
+  $('#pf-ai-name').value = profile.ai.name;
+  for (const side of ['user', 'ai']) {
+    const preview = $(`#avatar-preview-${side}`);
+    const avatar = profile[side].avatar;
+    preview.style.backgroundImage = avatar ? `url("${avatar}")` : '';
+    preview.textContent = avatar ? '' : avatarInitial(profile[side].name);
+    $(`#btn-avatar-${side}-clear`).classList.toggle('hidden', !avatar);
+  }
+}
+
+/** 头像选图：读取 → 压到 256px 以内 → 校验体积 */
+async function prepareAvatar(file) {
+  if (!file) return null;
+  if (!String(file.type || '').startsWith('image/')) {
+    toast('请选择图片文件', 'error');
+    return null;
+  }
+  if (Number(file.size) > MAX_BG_SOURCE_BYTES) {
+    toast(`图片体积 ${formatBytes(file.size)}，超过 ${formatBytes(MAX_BG_SOURCE_BYTES)} 上限`, 'error');
+    return null;
+  }
+  let dataUrl;
+  try {
+    dataUrl = await readAsDataUrl(file);
+  } catch {
+    toast('图片读取失败', 'error');
+    return null;
+  }
+  const prepared = await shrinkImage(dataUrl, AVATAR_MAX_DIM, AVATAR_MAX_DATA_URL_CHARS);
+  if (isTooLargeForStorage(prepared, AVATAR_MAX_DATA_URL_CHARS)) {
+    toast('头像压缩后仍然过大，请换一张图片', 'error');
+    return null;
+  }
+  return prepared;
+}
+
+/** 写入个人资料并同步界面（表单、消息区） */
+function applyProfilePatch(patch) {
+  store.updateProfile(state, patch);
+  persist();
+  renderProfileForm();
+  renderMessages({ keepScroll: true });
+}
+
+/** 切换设置面板：'appearance' | 'api' | 'prompt' | 'profile' */
+const SETTINGS_PANELS = ['appearance', 'api', 'prompt', 'profile'];
 
 function switchSettingsPanel(panel) {
   const target = SETTINGS_PANELS.includes(panel) ? panel : 'appearance';
@@ -1677,6 +1758,7 @@ function switchSettingsPanel(panel) {
 function openSettings(panel = 'appearance') {
   renderThemeOptions();
   renderBackgroundControls();
+  renderProfileForm();
   renderProviderList();
   renderTemplateList();
   switchSettingsPanel(panel);
@@ -1848,6 +1930,28 @@ function bind() {
   });
 
   $('#btn-compare-toggle').addEventListener('click', toggleCompare);
+
+  // 个人资料：名称用 change（失焦/回车才写），避免每敲一个字就重渲染消息区
+  $('#pf-user-name').addEventListener('change', (e) => applyProfilePatch({ user: { name: e.target.value } }));
+  $('#pf-ai-name').addEventListener('change', (e) => applyProfilePatch({ ai: { name: e.target.value } }));
+  $('#btn-avatar-user').addEventListener('click', () => {
+    avatarSide = 'user';
+    $('#avatar-input').click();
+  });
+  $('#btn-avatar-ai').addEventListener('click', () => {
+    avatarSide = 'ai';
+    $('#avatar-input').click();
+  });
+  $('#btn-avatar-user-clear').addEventListener('click', () => applyProfilePatch({ user: { avatar: null } }));
+  $('#btn-avatar-ai-clear').addEventListener('click', () => applyProfilePatch({ ai: { avatar: null } }));
+  $('#avatar-input').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // 清空以便重复选择同一张图片
+    const dataUrl = await prepareAvatar(file);
+    if (!dataUrl) return;
+    applyProfilePatch({ [avatarSide]: { avatar: dataUrl } });
+    toast('头像已更新');
+  });
   $('#btn-pill-prompt').addEventListener('click', (e) => {
     e.stopPropagation();
     togglePromptMenu();

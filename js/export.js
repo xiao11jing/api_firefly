@@ -43,10 +43,10 @@ function messageText(msg) {
     .join('');
 }
 
-function modelHeading(msg, providerName) {
-  if (!msg.model) return 'AI';
+function modelHeading(msg, providerName, aiLabel = 'AI') {
+  if (!msg.model) return aiLabel;
   const provider = providerName(msg.model.providerId);
-  return provider ? `AI（${provider} · ${msg.model.model}）` : `AI（${msg.model.model}）`;
+  return provider ? `${aiLabel}（${provider} · ${msg.model.model}）` : `${aiLabel}（${msg.model.model}）`;
 }
 
 /** 会话里用过的模型，按出现顺序去重 */
@@ -90,9 +90,15 @@ function promptBlock(snapshot) {
  * @param {object} [options]
  * @param {Date} [options.now] 导出时间
  * @param {(providerId:string)=>string} [options.providerName] 服务名解析
+ * @param {{user?:string, ai?:string}} [options.profile] 自定义的用户/AI 名称
  */
-export function sessionToMarkdown(session, { now = new Date(), providerName = () => '' } = {}) {
+export function sessionToMarkdown(
+  session,
+  { now = new Date(), providerName = () => '', profile = null } = {}
+) {
   if (!session) return '';
+  const userLabel = (profile && profile.user) || '你';
+  const aiLabel = (profile && profile.ai) || 'AI';
   const messages = session.messages || [];
   const lines = [];
   let lastPrompt = ''; // 上一条回复用过的系统提示正文，用于「同上」去重
@@ -106,7 +112,7 @@ export function sessionToMarkdown(session, { now = new Date(), providerName = ()
 
   for (const msg of messages) {
     const isUser = msg.role === 'user';
-    lines.push(isUser ? '## 你' : `## ${modelHeading(msg, providerName)}`, '');
+    lines.push(isUser ? `## ${userLabel}` : `## ${modelHeading(msg, providerName, aiLabel)}`, '');
 
     if (msg.error) {
       lines.push(`> 生成失败：${messageText(msg) || '未知错误'}`, '');

@@ -166,3 +166,28 @@ test('sessionToMarkdown 跳过空的文本片段', () => {
   assert.match(md, /## AI\n/);
   assert.ok(!md.includes('   \n'));
 });
+
+test('sessionToMarkdown 用自定义的用户与 AI 名称作标题', () => {
+  const md = sessionToMarkdown(
+    session([
+      { id: 'm1', role: 'user', content: [{ type: 'text', text: '问题' }] },
+      {
+        id: 'm2',
+        role: 'assistant',
+        model: { providerId: 'p1', model: 'mock-model' },
+        content: [{ type: 'text', text: '回答' }],
+      },
+    ]),
+    { providerName: () => 'Mock 服务', profile: { user: '小明', ai: '小助手' } }
+  );
+  assert.match(md, /## 小明/);
+  assert.match(md, /## 小助手（Mock 服务 · mock-model）/);
+  assert.ok(!md.includes('## 你'));
+});
+
+test('sessionToMarkdown 名称缺失时回退默认标题', () => {
+  const messages = [{ id: 'm1', role: 'user', content: [{ type: 'text', text: '问题' }] }];
+  assert.match(sessionToMarkdown(session(messages), { profile: { user: '' } }), /## 你/);
+  assert.match(sessionToMarkdown(session(messages), { profile: null }), /## 你/);
+  assert.match(sessionToMarkdown(session(messages)), /## 你/);
+});

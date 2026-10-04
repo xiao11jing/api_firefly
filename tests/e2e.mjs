@@ -376,7 +376,7 @@ try {
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#tab-prompt');
   check('左侧导航切到提示词面板', await page.locator('#panel-prompt').isVisible());
-  check('设置导航共三项且垂直排列', (await page.locator('.settings-nav-item').count()) === 3);
+  check('设置导航共四项且垂直排列', (await page.locator('.settings-nav-item').count()) === 4);
   check('模板列表初始为空', (await page.locator('#template-list .provider-item').count()) === 0);
   const navBox = await page.locator('.settings-nav').boundingBox();
   const panelBox = await page.locator('.settings-panels').boundingBox();
@@ -625,6 +625,92 @@ try {
   const hoverDark = await modelHoverColors();
   check('暗色主题下模型名 hover 取强调色', hoverDark.label === hoverDark.accent, JSON.stringify(hoverDark));
   await page.screenshot({ path: join(OUT, '13-composer-layout.png') });
+
+  // ---------- 9a-3. 个人资料：双方头像与名称 ----------
+  // 兜底：确保当前会话里同时有用户与 AI 消息，才能验证两边的消息头
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-profile');
+  check('导航可切到个人资料面板', await page.locator('#panel-profile').isVisible());
+  check('默认用户名为「你」', (await page.inputValue('#pf-user-name')) === '你');
+  check('默认 AI 名为「AI」', (await page.inputValue('#pf-ai-name')) === 'AI');
+  check('默认不带头像（用首字占位）', (await page.locator('.profile-avatar').first().textContent()) === '你');
+
+  const setProfileName = async (sel, value) => {
+    await page.fill(sel, value);
+    await page.dispatchEvent(sel, 'change');
+    await page.waitForTimeout(200);
+  };
+  await setProfileName('#pf-user-name', '小明');
+  await setProfileName('#pf-ai-name', '小助手');
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(300);
+  check('消息头显示自定义用户名', (await page.locator('.msg.user .msg-name').first().textContent()) === '小明');
+  check('AI 消息头显示自定义名称', (await page.locator('.msg.assistant .msg-name').first().textContent()) === '小助手');
+
+  // 头像：本地图片 → 双方各设置一张
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-profile');
+  await page.click('#btn-avatar-user');
+  await page.setInputFiles('#avatar-input', IMG_PATH);
+  await page.waitForTimeout(500);
+  await page.click('#btn-avatar-ai');
+  await page.setInputFiles('#avatar-input', IMG_PATH_2);
+  await page.waitForTimeout(500);
+  check('用户头像预览已应用图片', await page.evaluate(() => document.querySelector('#avatar-preview-user').style.backgroundImage.startsWith('url("data:image/')));
+  check('AI 头像预览已应用图片', await page.evaluate(() => document.querySelector('#avatar-preview-ai').style.backgroundImage.startsWith('url("data:image/')));
+  check('出现移除头像按钮', (await page.locator('#btn-avatar-user-clear:not(.hidden), #btn-avatar-ai-clear:not(.hidden)').count()) === 2);
+  await page.screenshot({ path: join(OUT, '14-profile-settings.png') });
+
+  const profileState = (await readState()).settings.profile;
+  check('个人资料已落盘', profileState.user.name === '小明' && profileState.ai.name === '小助手');
+  check('头像已落盘且为本地图片', profileState.user.avatar.startsWith('data:image/') && profileState.ai.avatar.startsWith('data:image/'));
+  check('头像体积在可存储范围内', profileState.user.avatar.length <= 400000, `${profileState.user.avatar.length} 字符`);
+
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(300);
+  check('消息区渲染头像图片', (await page.locator('.msg.user .msg-avatar img').count()) >= 1 && (await page.locator('.msg.assistant .msg-avatar img').count()) >= 1);
+  const headBoxes = await page.evaluate(() => {
+    const pick = (sel) => {
+      const head = document.querySelector(sel);
+      if (!head) return null;
+      return {
+        avatarX: Math.round(head.querySelector('.msg-avatar').getBoundingClientRect().x),
+        nameX: Math.round(head.querySelector('.msg-name').getBoundingClientRect().x),
+      };
+    };
+    return { user: pick('.msg.user .role-head'), ai: pick('.msg.assistant .role-head') };
+  });
+  check('用户消息头：名称在左、头像在右', headBoxes.user && headBoxes.user.avatarX > headBoxes.user.nameX, JSON.stringify(headBoxes.user));
+  check('AI 消息头：头像在左、名称在右', headBoxes.ai && headBoxes.ai.avatarX < headBoxes.ai.nameX, JSON.stringify(headBoxes.ai));
+  await page.screenshot({ path: join(OUT, '15-profile-messages.png') });
+
+  // 刷新后仍生效
+  await page.reload({ waitUntil: 'networkidle' });
+  check('刷新后消息头仍是自定义名称', (await page.locator('.msg.user .msg-name').first().textContent()) === '小明');
+  check('刷新后头像仍在', (await page.locator('.msg.assistant .msg-avatar img').count()) >= 1);
+
+  // 移除头像后回到首字占位
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-profile');
+  await page.click('#btn-avatar-user-clear');
+  await page.click('#btn-avatar-ai-clear');
+  await page.waitForTimeout(300);
+  check('移除后头像配置清空', (await readState()).settings.profile.user.avatar === null);
+  check('预览回到首字占位', (await page.locator('#avatar-preview-user').textContent()) === '小');
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(200);
+  check('消息头像回到首字占位', (await page.locator('.msg.user .msg-avatar img').count()) === 0);
+
+  // 名称留空则回退默认
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-profile');
+  await setProfileName('#pf-user-name', '   ');
+  check('名称留空回退默认「你」', (await page.inputValue('#pf-user-name')) === '你');
+  await page.click('#btn-close-settings');
 
   // ---------- 9b. 会话重命名（单击选中 / 双击进入编辑） ----------
   await page.click('#btn-new-chat');
