@@ -37,20 +37,32 @@ export function renderInline(raw) {
   // 2. 转义 HTML（原始标签在此被消灭）
   text = escapeHtml(text);
 
+  // 生成的标签也要抽成占位符：第 5 步的行内语法会扫过整段文本，
+  // 而 <a> 带 target="_blank"，其中的下划线会被当成斜体开标记，
+  // 结果把 <em> 插进属性值里，既破坏标签又让斜体失效。
+  const tags = [];
+  const protect = (html) => {
+    tags.push(html);
+    return `\u0000T${tags.length - 1}\u0000`;
+  };
+
   // 3. 图片 ![alt](url)（url 来自已转义文本，先还原 & 再重新转义，避免 &amp;amp;）
   // URL 支持一层嵌套括号，如 javascript:alert(1) 也能被完整捕获并拦截
   const urlPat = '((?:[^()\\s]|\\([^()\\s]*\\))+)';
   text = text.replace(new RegExp(`!\\[([^\\]]*)\\]\\(${urlPat}\\)`, 'g'), (m, alt, url) => {
     const safe = safeUrl(url.replace(/&amp;/g, '&'), { image: true });
     if (!safe) return m;
-    return `<img src="${escapeHtml(safe)}" alt="${escapeHtml(alt)}" loading="lazy">`;
+    // alt 在第 2 步已随整段文本转义过，此处再转一次会变成 &amp;amp;
+    return protect(`<img src="${escapeHtml(safe)}" alt="${alt}" loading="lazy">`);
   });
 
-  // 4. 链接 [text](url)
+  // 4. 链接 [text](url)：只保护标签本身，label 仍参与后续行内语法，
+  // 这样 [**粗体**](url) 里的强调依然生效
   text = text.replace(new RegExp(`\\[([^\\]]+)\\]\\(${urlPat}\\)`, 'g'), (m, label, url) => {
     const safe = safeUrl(url.replace(/&amp;/g, '&'));
     if (!safe) return label; // 危险协议降级为纯文本
-    return `<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">${label}</a>`;
+    const open = protect(`<a href="${escapeHtml(safe)}" target="_blank" rel="noopener noreferrer">`);
+    return `${open}${label}${protect('</a>')}`;
   });
 
   // 5. 粗体 / 删除线 / 斜体（顺序敏感）
@@ -60,7 +72,8 @@ export function renderInline(raw) {
   text = text.replace(/(^|[^*\w])\*([^*\n]+)\*(?=[^*\w]|$)/g, '$1<em>$2</em>');
   text = text.replace(/(^|[^_\w])_([^_\n]+)_(?=[^_\w]|$)/g, '$1<em>$2</em>');
 
-  // 6. 还原行内代码
+  // 6. 还原生成的标签与行内代码（先标签后代码：标签内可能含代码占位符）
+  text = text.replace(/\u0000T(\d+)\u0000/g, (_, i) => tags[Number(i)]);
   text = text.replace(/\u0000C(\d+)\u0000/g, (_, i) => `<code>${escapeHtml(codeSpans[Number(i)])}</code>`);
 
   return text;

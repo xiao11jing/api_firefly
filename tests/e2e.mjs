@@ -513,9 +513,70 @@ try {
   check('可切回暗黑主题', (await page.getAttribute('html', 'data-theme')) === 'dark');
   await page.click('#btn-close-settings');
 
+  // ---------- 9b. 会话重命名（单击选中 / 双击进入编辑） ----------
+  await page.click('#btn-new-chat');
+  await page.waitForTimeout(200);
+  const renameTitle = page.locator('#session-list .session-item').first().locator('.s-title');
+  check('新建会话使用默认名', (await renameTitle.textContent()) === '新会话');
+  // 单击会重建整个列表，两次点击之间节点被换掉后浏览器不再派发 dblclick，
+  // 因此这里必须用真实双击来验证「应用自己识别双击」这条路径
+  await renameTitle.dblclick();
+  await page.locator('#session-list .rename-input').waitFor({ timeout: 3000 });
+  check('双击进入重命名编辑', (await page.locator('#session-list .rename-input').count()) === 1);
+  await page.fill('#session-list .rename-input', '改过名的会话');
+  await page.press('#session-list .rename-input', 'Enter');
+  await page.waitForTimeout(300);
+  check('重命名在界面上生效', (await renameTitle.textContent()) === '改过名的会话');
+  const renamed = await activeSessionState();
+  check('重命名已落盘', !!renamed && renamed.title === '改过名的会话', renamed ? renamed.title : 'null');
+  await page.screenshot({ path: join(OUT, '11-rename.png') });
+  await page.reload({ waitUntil: 'networkidle' });
+  check('刷新后名字仍是改过的', (await page.locator('.session-item', { hasText: '改过名的会话' }).count()) === 1);
+
+  // ---------- 9c. 存储写入失败时的降级（模拟 localStorage 配额溢出） ----------
+  // 第 8 步为验证 401 把 key 改成了 bad-key，先恢复一个可用的
+  await page.click('#btn-pill-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.locator('.provider-item').first().click();
+  await page.fill('#pf-apiKey', 'test-key');
+  await page.getByRole('button', { name: '保存' }).click();
+  await page.click('#btn-close-settings');
+  await page.waitForFunction(() => document.querySelector('#settings-mask').classList.contains('hidden'));
+  // 让第 3 次起 setItem 抛配额异常，对应 发送 / 占位气泡 / 流式收尾 三次持久化
+  await page.evaluate(() => {
+    const proto = Object.getPrototypeOf(localStorage);
+    const orig = proto.setItem;
+    let calls = 0;
+    window.__restoreSetItem = () => {
+      proto.setItem = orig;
+    };
+    proto.setItem = function (...args) {
+      calls += 1;
+      if (calls >= 3) throw new DOMException('exceeded the quota', 'QuotaExceededError');
+      return orig.apply(this, args);
+    };
+  });
+  await page.fill('#input', '存储写满时的消息');
+  await page.press('#input', 'Enter');
+  await page.waitForSelector('.msg.assistant .prose', { timeout: 15000 });
+  // 等流式收尾：写入失败发生在分支结束的持久化上，界面必须能自行恢复
+  let recovered = true;
+  try {
+    await page.waitForSelector('#btn-send:not(.hidden)', { timeout: 20000 });
+  } catch {
+    recovered = false;
+  }
+  check('写入失败后发送按钮已恢复', recovered);
+  check('写入失败后未卡在生成中', await page.locator('#btn-stop').isHidden());
+  check('写入失败时给出明确提示', (await page.locator('#toast').textContent()).includes('本地保存失败'));
+  check('写入失败后回复仍可见', (await page.locator('.msg.assistant .prose').last().textContent()).length > 0);
+  await page.evaluate(() => window.__restoreSetItem());
+
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
-  const realConsoleErrors = consoleErrors.filter((e) => !e.includes('favicon'));
+  const realConsoleErrors = consoleErrors.filter(
+    (e) => !e.includes('favicon') && !e.includes('本地保存失败') // 上面故意触发的配额失败会打一条 console.error
+  );
   check('无控制台错误', realConsoleErrors.length === 0, realConsoleErrors.join(' | '));
 } catch (e) {
   check('流程执行未抛异常', false, String(e && e.message ? e.message : e));

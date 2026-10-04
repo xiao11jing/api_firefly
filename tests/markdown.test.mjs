@@ -99,3 +99,50 @@ test('CRLF 换行归一化', () => {
   assert.match(html, /<h1>t<\/h1>/);
   assert.match(html, /<p>body<\/p>/);
 });
+
+test('链接之后的斜体不会改写链接标签', () => {
+  // 回归：生成 <a> 时带 target="_blank"，行内斜体规则曾把其中的下划线当成开标记，
+  // 于是 <em> 被插进属性值，标签被破坏且斜体失效
+  const html = renderInline('[链接](https://ex.com/a) 然后 _斜体_');
+  assert.equal(
+    html,
+    '<a href="https://ex.com/a" target="_blank" rel="noopener noreferrer">链接</a> 然后 <em>斜体</em>'
+  );
+  assert.ok(!/target="[^"]*<em>/.test(html), 'target 属性被行内规则改写');
+});
+
+test('链接前后的多处斜体都各自生效', () => {
+  const html = renderInline('前 _一_ 后 [链接](https://ex.com/a) 再 _二_');
+  assert.equal((html.match(/<em>/g) || []).length, 2);
+  assert.match(html, /<em>一<\/em>/);
+  assert.match(html, /<em>二<\/em>/);
+  assert.ok(!html.includes('target="<em>'));
+});
+
+test('链接文字里的强调仍然生效', () => {
+  const html = renderInline('[**粗体**](https://ex.com/a)');
+  assert.match(html, /<a href="https:\/\/ex\.com\/a"[^>]*><strong>粗体<\/strong><\/a>/);
+});
+
+test('链接文字里的行内代码仍然生效', () => {
+  const html = renderInline('[`code`](https://ex.com/a) 与 _斜体_');
+  assert.match(html, /<a [^>]*><code>code<\/code><\/a>/);
+  assert.match(html, /<em>斜体<\/em>/);
+});
+
+test('图片 alt 只转义一次', () => {
+  const html = renderInline('![图 A & B](https://x/a.png)');
+  assert.match(html, /alt="图 A &amp; B"/);
+  assert.ok(!html.includes('&amp;amp;'));
+});
+
+test('图片 alt 中的下划线不被当成斜体', () => {
+  const html = renderInline('![图_1_](https://x/a.png)');
+  assert.match(html, /alt="图_1_"/);
+  assert.ok(!html.includes('<em>'));
+});
+
+test('生成的标签占位不影响危险协议拦截', () => {
+  assert.equal(renderInline('_斜体_ [点我](javascript:alert(1))'), '<em>斜体</em> 点我');
+  assert.ok(!renderInline('![x](javascript:alert(1)) _斜体_').includes('<img'));
+});

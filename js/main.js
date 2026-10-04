@@ -50,8 +50,23 @@ function toast(msg, type = '') {
   toastTimer = setTimeout(() => el.classList.add('hidden'), 3200);
 }
 
+/** 本地写入失败时只提示一次，避免流式过程中反复弹提示 */
+let storageWarned = false;
+
+/**
+ * 写入本地存储。失败（配额溢出、隐私模式禁用存储等）不能让调用方崩掉：
+ * 发送流程里 persist() 一旦抛出，后面的请求就不会发出，用户会看到消息凭空消失。
+ */
 function persist() {
-  store.saveState(window.localStorage, state);
+  try {
+    store.saveState(window.localStorage, state);
+    storageWarned = false;
+  } catch (e) {
+    console.error('本地保存失败', e);
+    if (storageWarned) return;
+    storageWarned = true;
+    toast('本地保存失败，本次改动未写入浏览器存储（可能是存储空间已满）', 'error');
+  }
 }
 
 function providerById(id) {
@@ -144,6 +159,40 @@ function formatTime(ts) {
   return `${d.getMonth() + 1}/${d.getDate()} ${hm}`;
 }
 
+/** 双击判定窗口（毫秒） */
+const DOUBLE_CLICK_MS = 400;
+/** 最近一次点击的会话，用于自行识别双击 */
+let lastSessionClick = null;
+
+/**
+ * 会话项点击：单击切换会话，双击重命名。
+ *
+ * 这里不能用 dblclick 事件：单击会 renderAll() 重建整个列表，
+ * 两次点击之间节点被换掉后浏览器就不再派发 dblclick，重命名永远不会触发。
+ * 因此按时间窗口自行判定，并始终对「当前在列表里的节点」操作，
+ * 避免拿着已被重建掉的游离节点去插入输入框。
+ */
+function onSessionClick(item, session) {
+  if (streaming) {
+    toast('生成中，请先停止或等待完成');
+    return;
+  }
+  const now = Date.now();
+  const doubled =
+    lastSessionClick && lastSessionClick.id === session.id && now - lastSessionClick.at < DOUBLE_CLICK_MS;
+  if (doubled) {
+    lastSessionClick = null;
+    const live = [...$('#session-list').children].find((el) => el.dataset.id === session.id) || item;
+    startRename(live, session, live.querySelector('.s-title'));
+    return;
+  }
+  lastSessionClick = { id: session.id, at: now };
+  state.activeSessionId = session.id;
+  persist();
+  renderAll();
+  closeSidebarOnMobile();
+}
+
 function renderSessions() {
   const list = $('#session-list');
   list.innerHTML = '';
@@ -175,17 +224,7 @@ function renderSessions() {
     });
 
     item.append(title, time, del);
-    item.addEventListener('click', () => {
-      if (streaming) {
-        toast('生成中，请先停止或等待完成');
-        return;
-      }
-      state.activeSessionId = s.id;
-      persist();
-      renderAll();
-      closeSidebarOnMobile();
-    });
-    item.addEventListener('dblclick', () => startRename(item, s, title));
+    item.addEventListener('click', () => onSessionClick(item, s));
     list.appendChild(item);
   }
 }
@@ -825,11 +864,23 @@ async function runBranches({ session, specs }) {
   setStreamingUI(true);
   controllers = specs.map(() => new AbortController());
   const started = Date.now();
-  const outcomes = await Promise.all(
-    specs.map((spec, i) => runBranch({ session, spec, controller: controllers[i], started }))
-  );
-  controllers = [];
-  setStreamingUI(false);
+  let outcomes = [];
+  let failed = null;
+  try {
+    outcomes = await Promise.all(
+      specs.map((spec, i) => runBranch({ session, spec, controller: controllers[i], started }))
+    );
+  } catch (e) {
+    // 分支里出现预期外的异常（例如持久化失败）时，先把界面恢复可用，再如实告知用户
+    failed = e;
+  } finally {
+    controllers = [];
+    setStreamingUI(false);
+  }
+  if (failed) {
+    console.error('生成分支异常', failed);
+    toast(`生成过程出错：${(failed && failed.message) || failed}`, 'error');
+  }
   if (outcomes.some((o) => o && o.aborted)) toast('已停止生成');
   renderMessages({ keepScroll: true });
   renderSessions();
@@ -1816,7 +1867,6 @@ function bind() {
 
 function init() {
   if (!state.sessions.length) store.createSession(state, state.selectedModel);
-  persist();
   applyTheme(state.settings && state.settings.theme);
   bind();
   renderAll();
@@ -1824,6 +1874,8 @@ function init() {
   renderThemeOptions();
   renderCompareUI();
   autoGrow();
+  // 放在绑定与渲染之后：写入失败也不能让整个界面失去响应
+  persist();
 }
 
 init();
