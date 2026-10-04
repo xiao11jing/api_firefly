@@ -513,6 +513,53 @@ try {
   check('可切回暗黑主题', (await page.getAttribute('html', 'data-theme')) === 'dark');
   await page.click('#btn-close-settings');
 
+  // ---------- 9a. 设置弹窗尺寸一致 + 背景图片 ----------
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  const modalSizes = [];
+  for (const panel of ['appearance', 'api', 'prompt']) {
+    await page.click(`#tab-${panel}`);
+    await page.waitForTimeout(220);
+    const box = await page.locator('#settings-mask .modal').boundingBox();
+    modalSizes.push(`${Math.round(box.width)}x${Math.round(box.height)}`);
+  }
+  check('切换设置面板时弹窗尺寸不变', new Set(modalSizes).size === 1, modalSizes.join(' / '));
+
+  await page.click('#tab-appearance');
+  await page.setInputFiles('#bg-input', IMG_PATH);
+  await page.waitForTimeout(500);
+  check('设置背景后根元素带 has-bg', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
+  check(
+    '背景层已应用本地图片',
+    await page.evaluate(() => document.querySelector('#bg-layer').style.backgroundImage.startsWith('url("data:image/'))
+  );
+  check('出现不透明度控件', await page.locator('#bg-opacity-row').isVisible());
+  const bgState = await readState();
+  check('背景已落盘', !!(bgState.settings.background && bgState.settings.background.dataUrl.startsWith('data:image/')));
+  check('背景体积在可存储范围内', bgState.settings.background.dataUrl.length <= 1600000, `${bgState.settings.background.dataUrl.length} 字符`);
+  await page.screenshot({ path: join(OUT, '12-background.png') });
+
+  await page.evaluate(() => {
+    const s = document.querySelector('#bg-opacity');
+    s.value = '70';
+    s.dispatchEvent(new Event('input', { bubbles: true }));
+    s.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(300);
+  check('不透明度实时生效', (await page.evaluate(() => document.querySelector('#bg-layer').style.opacity)) === '0.7');
+  check('不透明度已落盘', (await readState()).settings.background.opacity === 70);
+  await page.click('#btn-close-settings');
+
+  await page.reload({ waitUntil: 'networkidle' });
+  check('刷新后背景仍在', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#btn-bg-clear');
+  await page.waitForTimeout(300);
+  check('移除后不再有 has-bg', await page.evaluate(() => !document.documentElement.classList.contains('has-bg')));
+  check('移除后背景配置已清空', (await readState()).settings.background === null);
+  await page.click('#btn-close-settings');
+
   // ---------- 9b. 会话重命名（单击选中 / 双击进入编辑） ----------
   await page.click('#btn-new-chat');
   await page.waitForTimeout(200);

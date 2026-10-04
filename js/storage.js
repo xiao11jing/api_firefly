@@ -2,6 +2,7 @@
  * storage.js — 本地持久化（纯逻辑，storage 参数可注入，便于测试）
  */
 import { isPrice, normalizeUsage } from './usage.js';
+import { normalizeBgOpacity } from './background.js';
 
 export const STORAGE_KEY = 'ai-multi-chat-v1';
 
@@ -28,7 +29,7 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: { theme: DEFAULT_THEME },
+    settings: { theme: DEFAULT_THEME, background: null },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
     promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
@@ -67,6 +68,27 @@ export function saveState(storage, state) {
 export function setTheme(state, theme) {
   state.settings = { ...(state.settings || {}), theme: normalizeTheme(theme) };
   return state.settings.theme;
+}
+
+/**
+ * 背景图只接受本地图片的 data URL：外链会被写进存储、且渲染时无法保证可达；
+ * 载荷限定为 base64 字符集，这样拼进 CSS 的 url() 时不存在注入面。
+ */
+const BACKGROUND_DATA_URL = /^data:image\/(?:png|jpe?g|gif|webp|avif|bmp|svg\+xml);base64,[A-Za-z0-9+/]+={0,2}$/i;
+
+/** 归一化背景配置；非法或缺失一律视为未设置背景 */
+export function normalizeBackground(value) {
+  if (!value || typeof value !== 'object') return null;
+  const dataUrl = typeof value.dataUrl === 'string' ? value.dataUrl.trim() : '';
+  if (!BACKGROUND_DATA_URL.test(dataUrl)) return null;
+  return { dataUrl, opacity: normalizeBgOpacity(value.opacity) };
+}
+
+/** 设置或清除背景图（background 传 null 表示清除），返回生效后的取值 */
+export function setBackground(state, background) {
+  const bg = normalizeBackground(background);
+  state.settings = { ...(state.settings || {}), background: bg };
+  return bg;
 }
 
 /** 开关对比模式，返回生效后的取值 */
@@ -148,6 +170,7 @@ function normalizeState(s) {
     settings: {
       ...(s.settings && typeof s.settings === 'object' ? s.settings : {}),
       theme: normalizeTheme(s.settings && s.settings.theme),
+      background: normalizeBackground(s.settings && s.settings.background),
     },
     compare: normalizeCompare(s.compare),
     promptTemplates: Array.isArray(s.promptTemplates)

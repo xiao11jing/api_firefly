@@ -15,6 +15,17 @@ import {
   toMessageParts,
 } from './attachments.js';
 import { extractPdfText } from './pdf-text.js';
+import {
+  BG_JPEG_QUALITY,
+  BG_MAX_DIM,
+  DEFAULT_BG_OPACITY,
+  MAX_BG_DATA_URL_CHARS,
+  MAX_BG_SOURCE_BYTES,
+  computeScale,
+  isTooLargeForStorage,
+  needsReencode,
+  normalizeBgOpacity,
+} from './background.js';
 import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
@@ -1557,6 +1568,97 @@ function chooseTheme(theme) {
   toast(`已切换到${THEME_LABELS[applied] || applied}主题`);
 }
 
+// ---------- 应用背景图 ----------
+
+/** 当前生效的背景配置（未设置时为 null） */
+function currentBackground() {
+  return (state.settings && state.settings.background) || null;
+}
+
+/** 把背景配置应用到界面：图片层、透明度与启用标记 */
+function applyBackground() {
+  const layer = $('#bg-layer');
+  if (!layer) return;
+  const bg = currentBackground();
+  if (!bg) {
+    layer.style.backgroundImage = '';
+    layer.style.opacity = '';
+    document.documentElement.classList.remove('has-bg');
+    return;
+  }
+  layer.style.backgroundImage = `url("${bg.dataUrl}")`;
+  layer.style.opacity = String(bg.opacity / 100);
+  document.documentElement.classList.add('has-bg');
+}
+
+function renderBackgroundControls() {
+  const bg = currentBackground();
+  const opacity = bg ? bg.opacity : DEFAULT_BG_OPACITY;
+  $('#bg-opacity').value = String(opacity);
+  $('#bg-opacity-value').textContent = `${opacity}%`;
+  $('#bg-opacity-row').classList.toggle('hidden', !bg);
+  $('#btn-bg-clear').classList.toggle('hidden', !bg);
+  $('#bg-thumb').style.backgroundImage = bg ? `url("${bg.dataUrl}")` : '';
+  $('#bg-name').textContent = bg ? '已设置背景图片' : '未选择图片';
+  $('#bg-note').textContent = bg
+    ? `${formatBytes(Math.round(bg.dataUrl.length * 0.75))} · 仅保存在本地`
+    : '大图会自动等比压缩后再保存';
+}
+
+/**
+ * 超过最长边或体积上限时用画布等比缩放并重新编码为 JPEG，
+ * 否则沿用原图（小图保留 PNG 透明通道）。
+ */
+function shrinkBackgroundImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const { width, height, scaled } = computeScale(img.naturalWidth, img.naturalHeight, BG_MAX_DIM);
+        if (!needsReencode({ scaled, dataUrl })) {
+          resolve(dataUrl);
+          return;
+        }
+        const canvas = document.createElement('canvas');
+        canvas.width = width || img.naturalWidth;
+        canvas.height = height || img.naturalHeight;
+        canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL('image/jpeg', BG_JPEG_QUALITY));
+      } catch {
+        resolve(dataUrl); // 画布不可用时退回原图，由体积校验兜底
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/** 选图后处理：读取 → 必要时压缩 → 校验体积；失败返回 null 并提示原因 */
+async function prepareBackground(file) {
+  if (!file) return null;
+  if (!String(file.type || '').startsWith('image/')) {
+    toast('请选择图片文件', 'error');
+    return null;
+  }
+  if (Number(file.size) > MAX_BG_SOURCE_BYTES) {
+    toast(`图片体积 ${formatBytes(file.size)}，超过 ${formatBytes(MAX_BG_SOURCE_BYTES)} 上限`, 'error');
+    return null;
+  }
+  let dataUrl;
+  try {
+    dataUrl = await readAsDataUrl(file);
+  } catch {
+    toast('图片读取失败', 'error');
+    return null;
+  }
+  const prepared = await shrinkBackgroundImage(dataUrl);
+  if (isTooLargeForStorage(prepared, MAX_BG_DATA_URL_CHARS)) {
+    toast('压缩后仍然过大，请换一张尺寸更小的图片', 'error');
+    return null;
+  }
+  return prepared;
+}
+
 /** 切换设置面板：'appearance' | 'api' | 'prompt' */
 const SETTINGS_PANELS = ['appearance', 'api', 'prompt'];
 
@@ -1574,6 +1676,7 @@ function switchSettingsPanel(panel) {
 
 function openSettings(panel = 'appearance') {
   renderThemeOptions();
+  renderBackgroundControls();
   renderProviderList();
   renderTemplateList();
   switchSettingsPanel(panel);
@@ -1829,6 +1932,45 @@ function bind() {
   for (const opt of document.querySelectorAll('#theme-options .theme-option')) {
     opt.addEventListener('click', () => chooseTheme(opt.dataset.themeValue));
   }
+
+  // 背景图片
+  $('#btn-bg-choose').addEventListener('click', () => $('#bg-input').click());
+  $('#bg-input').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // 清空以便重复选择同一张图片
+    const dataUrl = await prepareBackground(file);
+    if (!dataUrl) return;
+    const prev = currentBackground();
+    store.setBackground(state, { dataUrl, opacity: prev ? prev.opacity : DEFAULT_BG_OPACITY });
+    persist();
+    applyBackground();
+    renderBackgroundControls();
+    toast('背景已更新');
+  });
+  $('#btn-bg-clear').addEventListener('click', () => {
+    store.setBackground(state, null);
+    persist();
+    applyBackground();
+    renderBackgroundControls();
+    toast('已移除背景');
+  });
+  // 拖动时只做实时预览，松手才写入存储，避免拖动过程中反复写 localStorage
+  $('#bg-opacity').addEventListener('input', (e) => {
+    const bg = currentBackground();
+    if (!bg) return;
+    const opacity = normalizeBgOpacity(e.target.value, bg.opacity);
+    state.settings.background = { ...bg, opacity };
+    $('#bg-opacity-value').textContent = `${opacity}%`;
+    applyBackground();
+  });
+  $('#bg-opacity').addEventListener('change', (e) => {
+    const bg = currentBackground();
+    if (!bg) return;
+    store.setBackground(state, { dataUrl: bg.dataUrl, opacity: normalizeBgOpacity(e.target.value, bg.opacity) });
+    persist();
+    renderBackgroundControls();
+  });
+
   $('#btn-sidebar-settings').addEventListener('click', () => {
     closeSidebarOnMobile();
     openSettings('appearance');
@@ -1868,6 +2010,7 @@ function bind() {
 function init() {
   if (!state.sessions.length) store.createSession(state, state.selectedModel);
   applyTheme(state.settings && state.settings.theme);
+  applyBackground();
   bind();
   renderAll();
   renderAttachments();

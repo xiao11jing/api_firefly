@@ -1220,7 +1220,8 @@ mark.search-hit.active {
 
 .modal {
   width: min(960px, 100%);
-  max-height: min(680px, 92vh);
+  /* 固定高度：切换外观/API/提示词时整体尺寸保持一致，不再随内容跳动 */
+  height: min(680px, 92vh);
   display: flex;
   flex-direction: column;
   background: var(--sidebar);
@@ -1367,6 +1368,85 @@ mark.search-hit.active {
 .tt-line { height: 6px; border-radius: 3px; }
 .tt-short { width: 55%; }
 .tt-pill { height: 12px; width: 64%; border-radius: 6px; margin-top: 3px; }
+
+/* ---------- 背景图片设置 ---------- */
+
+.bg-picker {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.bg-thumb {
+  flex-shrink: 0;
+  width: 72px;
+  height: 48px;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  background-color: var(--bg);
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+}
+
+.bg-picker-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.bg-picker-name {
+  font-size: 12.5px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.bg-picker-note { font-size: 11.5px; color: var(--faint); }
+.bg-picker-actions { flex-shrink: 0; display: flex; gap: 8px; }
+
+.bg-opacity { margin-top: 14px; }
+.bg-opacity-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.bg-opacity-head b { color: var(--ink); font-weight: 600; }
+
+.bg-opacity input[type="range"] {
+  width: 100%;
+  height: 6px;
+  margin: 8px 0 4px;
+  appearance: none;
+  border-radius: 3px;
+  background: var(--surface-2);
+  outline: none;
+}
+.bg-opacity input[type="range"]::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
+.bg-opacity input[type="range"]::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+}
 
 .settings-grid {
   display: grid;
@@ -1569,4 +1649,38 @@ mark.search-hit.active {
   .field-row { grid-template-columns: 1fr; }
   .mode-toggle span { display: none; }
   .mode-toggle { padding: 0 9px; }
+  .bg-picker { flex-wrap: wrap; }
+  .bg-picker-actions { flex-basis: 100%; }
+}
+
+/* ---------- 应用背景图（由 外观 → 背景图片 控制） ---------- */
+
+/* 背景层铺满视口，位于页面底色之上、应用内容之下 */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  pointer-events: none;
+}
+
+/*
+ * 背景图开启后把应用抬到背景层之上，并让主要面板半透明以便透出背景。
+ * color-mix 不支持的浏览器会丢弃该声明，面板保持不透明，只是看不到背景。
+ */
+html.has-bg .app {
+  position: relative;
+  z-index: 1;
+}
+html.has-bg .sidebar {
+  background: color-mix(in srgb, var(--sidebar) 74%, transparent);
+  backdrop-filter: blur(10px);
+}
+html.has-bg .search-bar {
+  background: color-mix(in srgb, var(--surface) 74%, transparent);
+}
+html.has-bg .composer {
+  background: color-mix(in srgb, var(--surface) 80%, transparent);
 }
