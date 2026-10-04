@@ -357,7 +357,7 @@ try {
   const PROMPT_V1 = '你是一位严谨的中文编辑，回答先给结论再给理由。';
   const PROMPT_V2 = '你是一位代码审查者，只指出问题，不复述代码。';
 
-  await page.click('#btn-pill-settings');
+  await page.click('#btn-sidebar-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#tab-prompt');
   check('左侧导航切到提示词面板', await page.locator('#panel-prompt').isVisible());
@@ -411,7 +411,7 @@ try {
   );
 
   // 改模板正文：会话仍用旧快照，需显式重新套用
-  await page.click('#btn-pill-settings');
+  await page.click('#btn-sidebar-settings');
   await page.click('#tab-prompt');
   await page.locator('#template-list .provider-item').first().click();
   await page.fill('#tf-content', PROMPT_V2);
@@ -453,8 +453,9 @@ try {
   check('导出标注未使用提示的轮次', promptMd.includes('> 本轮未使用系统提示'));
 
   // ---------- 8. 错误处理（bad key → 401） ----------
-  await page.click('#btn-pill-settings');
+  await page.click('#btn-sidebar-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-api');
   await page.locator('.provider-item').first().click();
   await page.fill('#pf-apiKey', 'bad-key');
   await page.getByRole('button', { name: '保存' }).click();
@@ -526,9 +527,26 @@ try {
   check('切换设置面板时弹窗尺寸不变', new Set(modalSizes).size === 1, modalSizes.join(' / '));
 
   await page.click('#tab-appearance');
+  const sidebarBefore = await page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
   await page.setInputFiles('#bg-input', IMG_PATH);
   await page.waitForTimeout(500);
   check('设置背景后根元素带 has-bg', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
+  // 背景要铺满整个应用区域：侧边栏等面板必须转为半透明，否则图片只在会话区可见
+  const sidebarAfter = await page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
+  // color-mix 的计算结果可能是 color(srgb r g b / a)，也可能是 rgba(...)，统一取出 alpha
+  const alphaOf = (css) => {
+    const slash = css.match(/\/\s*([\d.]+)\s*\)/);
+    if (slash) return Number(slash[1]);
+    const rgba = css.match(/rgba\([^)]*,\s*([\d.]+)\)/);
+    if (rgba) return Number(rgba[1]);
+    return 1; // 无 alpha 分量即完全不透明
+  };
+  const sidebarAlpha = alphaOf(sidebarAfter);
+  check(
+    '背景铺到侧边栏（面板转为半透明）',
+    sidebarBefore !== sidebarAfter && Number.isFinite(sidebarAlpha) && sidebarAlpha <= 0.4,
+    `${sidebarBefore} → ${sidebarAfter}`
+  );
   check(
     '背景层已应用本地图片',
     await page.evaluate(() => document.querySelector('#bg-layer').style.backgroundImage.startsWith('url("data:image/'))
@@ -560,6 +578,29 @@ try {
   check('移除后背景配置已清空', (await readState()).settings.background === null);
   await page.click('#btn-close-settings');
 
+  // ---------- 9a-2. 输入框布局：文字在上、控件在底部一行 ----------
+  check('输入框内不再有设置齿轮', (await page.locator('#btn-pill-settings').count()) === 0);
+  const inputBox = await page.locator('#input').boundingBox();
+  const barBox = await page.locator('.composer-bar').boundingBox();
+  check(
+    '文字输入区位于控件行之上',
+    inputBox.y + inputBox.height <= barBox.y + 1,
+    `文字底 ${Math.round(inputBox.y + inputBox.height)} / 控件顶 ${Math.round(barBox.y)}`
+  );
+  check(
+    '附件、模型、发送都在底部控件行内',
+    await page.evaluate(() =>
+      ['#btn-attach', '#model-pill', '#btn-send'].every((s) =>
+        document.querySelector('.composer-bar').contains(document.querySelector(s))
+      )
+    )
+  );
+  const sendBox = await page.locator('#btn-send').boundingBox();
+  const pillBox = await page.locator('#model-pill').boundingBox();
+  check('模型选择与发送同处一行', Math.abs(sendBox.y - pillBox.y) < 14, `send.y=${Math.round(sendBox.y)} pill.y=${Math.round(pillBox.y)}`);
+  check('发送按钮在输入框右侧', sendBox.x > inputBox.x + inputBox.width / 2);
+  await page.screenshot({ path: join(OUT, '13-composer-layout.png') });
+
   // ---------- 9b. 会话重命名（单击选中 / 双击进入编辑） ----------
   await page.click('#btn-new-chat');
   await page.waitForTimeout(200);
@@ -582,8 +623,9 @@ try {
 
   // ---------- 9c. 存储写入失败时的降级（模拟 localStorage 配额溢出） ----------
   // 第 8 步为验证 401 把 key 改成了 bad-key，先恢复一个可用的
-  await page.click('#btn-pill-settings');
+  await page.click('#btn-sidebar-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-api');
   await page.locator('.provider-item').first().click();
   await page.fill('#pf-apiKey', 'test-key');
   await page.getByRole('button', { name: '保存' }).click();

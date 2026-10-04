@@ -1147,10 +1147,11 @@ mark.search-hit.active {
 .composer {
   max-width: 820px;
   margin: 0 auto;
+  /* 文字在上、控件行在下 */
   display: flex;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 9px 10px;
+  flex-direction: column;
+  gap: 4px;
+  padding: 10px 10px 8px;
   background: var(--surface);
   border: 1px solid var(--border-strong);
   border-radius: 14px;
@@ -1163,7 +1164,7 @@ mark.search-hit.active {
 .composer-tool:disabled:hover { background: transparent; color: var(--muted); border-color: transparent; }
 
 .composer textarea {
-  flex: 1;
+  width: 100%;
   resize: none;
   border: none;
   outline: none;
@@ -1174,9 +1175,22 @@ mark.search-hit.active {
   line-height: 1.5;
   max-height: 180px;
   min-height: 24px;
-  padding: 5px 2px;
+  padding: 2px 4px;
 }
 .composer textarea::placeholder { color: var(--faint); }
+
+/* 底部控件行：附件在左，模型与发送在右 */
+.composer-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.composer-actions {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
 
 .send-btn {
   display: inline-flex;
@@ -1667,7 +1681,9 @@ mark.search-hit.active {
 }
 
 /*
- * 背景图开启后把应用抬到背景层之上，并让主要面板半透明以便透出背景。
+ * 背景图开启后把应用抬到背景层之上，并让各面板大幅半透明，
+ * 使图片铺满整个应用区域（含侧边栏与顶栏），而不是只在会话区可见。
+ * 保留一层很淡的底衬 + 模糊，保证面板上的文字仍有足够对比度。
  * color-mix 不支持的浏览器会丢弃该声明，面板保持不透明，只是看不到背景。
  */
 html.has-bg .app {
@@ -1675,12 +1691,16 @@ html.has-bg .app {
   z-index: 1;
 }
 html.has-bg .sidebar {
-  background: color-mix(in srgb, var(--sidebar) 74%, transparent);
-  backdrop-filter: blur(10px);
+  background: color-mix(in srgb, var(--sidebar) 32%, transparent);
+  backdrop-filter: blur(12px);
+}
+html.has-bg .topbar {
+  background: color-mix(in srgb, var(--bg) 32%, transparent);
 }
 html.has-bg .search-bar {
-  background: color-mix(in srgb, var(--surface) 74%, transparent);
+  background: color-mix(in srgb, var(--surface) 42%, transparent);
 }
-html.has-bg .composer {
-  background: color-mix(in srgb, var(--surface) 80%, transparent);
+html.has-bg .composer,
+html.has-bg .attach-bar {
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
 }

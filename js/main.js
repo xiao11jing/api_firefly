@@ -1847,11 +1847,6 @@ function bind() {
     $('#input').focus();
   });
 
-  $('#btn-pill-settings').addEventListener('click', (e) => {
-    e.stopPropagation();
-    closeModelMenu();
-    openSettings('api');
-  });
   $('#btn-compare-toggle').addEventListener('click', toggleCompare);
   $('#btn-pill-prompt').addEventListener('click', (e) => {
     e.stopPropagation();
