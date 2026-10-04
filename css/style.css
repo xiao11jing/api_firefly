@@ -81,7 +81,7 @@
   --border-strong: #d2d9e3;
   --ink: #1a1f27;
   --muted: #5b6673;
-  --faint: #8b94a2;
+  --faint: #1a1f27;
 
   --accent: #2f6bed;
   --accent-soft: rgba(47, 107, 237, 0.09);
@@ -186,17 +186,25 @@ button { font-family: inherit; cursor: pointer; }
   display: flex;
   align-items: center;
   gap: 9px;
-  font-weight: 600;
-  font-size: 14.5px;
-  letter-spacing: 0.2px;
+  min-width: 0;
 }
 
-.brand-mark {
-  width: 9px;
-  height: 9px;
-  border-radius: 3px;
-  background: var(--accent);
-  box-shadow: 0 0 12px var(--accent-glow);
+/* 左上角显示 AI 的头像与名称，跟随「个人资料」里的设置 */
+.brand .brand-avatar {
+  width: 28px;
+  height: 28px;
+  font-size: 12px;
+}
+
+.brand-name {
+  font-family: '华文行楷', 'STXingkai', '华文楷体', 'STKaiti', '楷体', KaiTi, 'Brush Script MT', 'Segoe Script', cursive;
+  font-size: 19px;
+  font-weight: 500;
+  letter-spacing: 0.6px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .icon-btn {
@@ -779,14 +787,14 @@ mark.search-hit.active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 24px;
-  height: 24px;
+  width: 30px;
+  height: 30px;
   flex-shrink: 0;
   border-radius: 50%;
   overflow: hidden;
   background: var(--accent);
   color: #fff;
-  font-size: 11px;
+  font-size: 13px;
   font-weight: 600;
   line-height: 1;
   user-select: none;
@@ -1201,7 +1209,7 @@ mark.search-hit.active {
 }
 .composer textarea::placeholder { color: var(--faint); }
 
-/* 底部控件行：附件在左，模型与发送在右 */
+/* 底部控件行：附件在左，上下文占用环、模型与发送在右 */
 .composer-bar {
   display: flex;
   align-items: center;
@@ -1213,6 +1221,30 @@ mark.search-hit.active {
   align-items: center;
   gap: 8px;
 }
+
+/* 上下文占用环：本次请求约占模型上下文窗口的比例（上限见 usage.js 的内置表，可手动覆盖） */
+.context-ring {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  cursor: default;
+}
+.context-ring svg { transform: rotate(-90deg); }
+.context-ring circle {
+  fill: none;
+  stroke-width: 2.5;
+}
+.ring-track { stroke: var(--border-strong); }
+.ring-progress {
+  stroke: var(--accent);
+  stroke-linecap: round;
+  stroke-dasharray: 0 50.27;
+  transition: stroke-dasharray 0.3s ease, stroke 0.3s ease;
+}
+.context-ring.high .ring-progress { stroke: var(--danger); }
 
 .send-btn {
   display: inline-flex;

@@ -31,11 +31,13 @@ import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
   computeCost,
+  contextRatio,
   estimateApiTokens,
   estimateTokens,
   formatCost,
   formatTokens,
   numOrNull,
+  resolveContextWindow,
   resolvePrice,
   usageToRecord,
 } from './usage.js';
@@ -298,6 +300,8 @@ function toggleModelMenu() {
 }
 
 function renderModelSelect() {
+  // 上下文上限随所选模型变化，这里一并刷新占用环
+  renderContextRing();
   const dot = $('#model-dot');
   const pill = $('#model-pill');
   const label = $('#model-label');
@@ -555,6 +559,18 @@ function renderName(side) {
   return span;
 }
 
+/** 左上角品牌位：显示 AI 的头像与名称，跟随「个人资料」里的设置 */
+function renderBrand() {
+  const box = $('#brand');
+  if (!box) return;
+  const avatar = renderAvatar('ai');
+  avatar.classList.add('brand-avatar');
+  const label = document.createElement('span');
+  label.className = 'brand-name';
+  label.textContent = profileOf('ai').name;
+  box.replaceChildren(avatar, label);
+}
+
 function usageItem(text, className = '') {
   const span = document.createElement('span');
   span.className = 'u-item' + (className ? ' ' + className : '');
@@ -661,6 +677,7 @@ function renderMessages({ keepScroll = false } = {}) {
   const box = $('#messages');
   const session = store.getActiveSession(state);
   renderSessionTools(session);
+  renderContextRing();
   if (!session || !session.messages.length) {
     renderEmptyState();
     $('#topbar-title').textContent = session ? session.title : '新会话';
@@ -1471,6 +1488,63 @@ function renderAttachments() {
     ? summary + (isFull(attachments) ? ` · 已达 ${MAX_ATTACHMENTS} 个上限` : '')
     : '';
   $('#btn-attach').disabled = isFull(attachments) || readingAttachments > 0;
+  renderContextRing();
+}
+
+// ---------- 上下文占用环 ----------
+
+/** 环形周长（半径 8） */
+const RING_CIRCUMFERENCE = 2 * Math.PI * 8;
+
+/** 下一次请求预计占用的上下文 token 数（含尚未发送的附件） */
+function pendingContextTokens(session, target, comparing) {
+  let tokens = estimateApiTokens(buildApiMessages(session, target, comparing).map(toApiMessage));
+  if (attachments.length) {
+    const pending = toMessageParts(attachments).map((part) => toApiMessage({ role: 'user', content: [part] }));
+    tokens += estimateApiTokens(pending);
+  }
+  return tokens;
+}
+
+/**
+ * 输入框左侧的上下文占用环：本次请求约占模型上下文窗口的比例。
+ * 上限优先取服务里手填的，其次按模型名匹配内置参考表，最后用兜底默认值。
+ */
+function renderContextRing() {
+  const box = $('#context-ring');
+  if (!box) return;
+  const session = store.getActiveSession(state);
+  const { comparing, targets } = sendTargets();
+  const target = targets[0] || null;
+  if (!session || !target) {
+    box.classList.add('hidden');
+    box.removeAttribute('title');
+    return;
+  }
+
+  const tokens = pendingContextTokens(session, target, comparing);
+  const limit = resolveContextWindow(target.provider, target.model);
+  const ratio = contextRatio(tokens, limit.tokens);
+  box.querySelector('.ring-progress').setAttribute(
+    'stroke-dasharray',
+    `${(RING_CIRCUMFERENCE * ratio).toFixed(2)} ${RING_CIRCUMFERENCE.toFixed(2)}`
+  );
+  box.classList.remove('hidden');
+  box.classList.toggle('high', ratio >= 0.9);
+
+  const sourceText =
+    limit.source === 'provider'
+      ? '按该服务填写的上下文长度'
+      : limit.source === 'builtin'
+        ? '按模型名匹配的内置参考值'
+        : '未匹配到该模型，按默认值';
+  box.title =
+    `本次请求约占上下文 ${formatTokens(tokens)} / ${formatTokens(limit.tokens)}（${Math.round(ratio * 100)}%）\n` +
+    `上限${sourceText}，可在「API 服务」设置里手动指定`;
+  box.setAttribute(
+    'aria-label',
+    `上下文占用 ${formatTokens(tokens)} / ${formatTokens(limit.tokens)}，${Math.round(ratio * 100)}%`
+  );
 }
 
 function readAsDataUrl(file) {
@@ -1732,11 +1806,12 @@ async function prepareAvatar(file) {
   return prepared;
 }
 
-/** 写入个人资料并同步界面（表单、消息区） */
+/** 写入个人资料并同步界面（表单、消息区、左上角品牌位） */
 function applyProfilePatch(patch) {
   store.updateProfile(state, patch);
   persist();
   renderProfileForm();
+  renderBrand();
   renderMessages({ keepScroll: true });
 }
 
@@ -1807,6 +1882,7 @@ function resetProviderForm() {
   $('#pf-proxyUrl').value = '';
   $('#pf-priceInput').value = '';
   $('#pf-priceOutput').value = '';
+  $('#pf-contextLength').value = '';
   $('#btn-del-provider').classList.add('hidden');
   renderProviderList();
   $('#pf-name').focus();
@@ -1824,6 +1900,7 @@ function fillProviderForm(id) {
   $('#pf-proxyUrl').value = p.proxyUrl || '';
   $('#pf-priceInput').value = p.price ? String(p.price.input) : '';
   $('#pf-priceOutput').value = p.price ? String(p.price.output) : '';
+  $('#pf-contextLength').value = p.contextLength ? String(p.contextLength) : '';
   $('#btn-del-provider').classList.remove('hidden');
   renderProviderList();
 }
@@ -1859,6 +1936,12 @@ function saveProviderForm(e) {
     toast(priceResult.error, 'error');
     return;
   }
+  const rawContext = $('#pf-contextLength').value.trim();
+  const contextLength = rawContext ? numOrNull(rawContext) : null;
+  if (rawContext && (contextLength === null || contextLength <= 0)) {
+    toast('上下文长度需填写正整数，或留空', 'error');
+    return;
+  }
   const models = $('#pf-models').value
     .split(/[\n,]/)
     .map((s) => s.trim())
@@ -1872,6 +1955,7 @@ function saveProviderForm(e) {
     models,
     proxyUrl: $('#pf-proxyUrl').value.trim(),
     price: priceResult.price,
+    contextLength,
   });
   persist();
 
@@ -2115,6 +2199,7 @@ function init() {
   renderAttachments();
   renderThemeOptions();
   renderCompareUI();
+  renderBrand();
   autoGrow();
   // 放在绑定与渲染之后：写入失败也不能让整个界面失去响应
   persist();

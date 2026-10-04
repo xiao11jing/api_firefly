@@ -39,6 +39,23 @@ export const BUILTIN_PRICES = [
   { match: /glm-4/i, input: 4.3, output: 4.3 },
 ];
 
+/** 内置上下文窗口兜底值（token） */
+export const DEFAULT_CONTEXT_WINDOW = 128000;
+
+/**
+ * 内置上下文窗口参考值（token）。同样按「最具体在前」排列，
+ * 只用于界面上的占用比例提示，可在 API 服务设置里手动覆盖。
+ */
+export const BUILTIN_CONTEXT_WINDOWS = [
+  { match: /gemini-[12]\.5-pro|gemini-1\.5-pro/i, tokens: 2000000 },
+  { match: /gemini/i, tokens: 1000000 },
+  { match: /claude/i, tokens: 200000 },
+  { match: /gpt-3\.5/i, tokens: 16385 },
+  { match: /gpt-4o|gpt-4\.1|gpt-4-turbo|o[34]/i, tokens: 128000 },
+  { match: /deepseek/i, tokens: 64000 },
+  { match: /qwen|moonshot|kimi|glm-4/i, tokens: 128000 },
+];
+
 /** 数值化；空值与非法值一律返回 null（0 视为合法） */
 export function numOrNull(value) {
   if (value === null || value === undefined || value === '') return null;
@@ -153,6 +170,29 @@ export function resolvePrice(provider, model) {
   const name = String(model || '');
   const hit = BUILTIN_PRICES.find((entry) => entry.match.test(name));
   return hit ? { input: hit.input, output: hit.output, source: 'builtin' } : null;
+}
+
+/**
+ * 解析某模型适用的上下文窗口上限。
+ * 服务里手填的优先，其次内置参考表，最后用兜底默认值。
+ * @returns {{tokens:number, source:'provider'|'builtin'|'default'}}
+ */
+export function resolveContextWindow(provider, model) {
+  const custom = numOrNull(provider && provider.contextLength);
+  if (custom !== null && custom > 0) return { tokens: Math.round(custom), source: 'provider' };
+  const name = String(model || '');
+  const hit = BUILTIN_CONTEXT_WINDOWS.find((entry) => entry.match.test(name));
+  return hit
+    ? { tokens: hit.tokens, source: 'builtin' }
+    : { tokens: DEFAULT_CONTEXT_WINDOW, source: 'default' };
+}
+
+/** 上下文占用比例（0~1）；上限非法或缺失时返回 0 */
+export function contextRatio(tokens, limit) {
+  const t = Math.max(0, numOrNull(tokens) ?? 0);
+  const l = numOrNull(limit) ?? 0;
+  if (l <= 0) return 0;
+  return Math.min(1, t / l);
 }
 
 /** 按用量与单价计算费用（人民币），单价单位为「每百万 token」 */

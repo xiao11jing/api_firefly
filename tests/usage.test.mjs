@@ -1,8 +1,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  BUILTIN_CONTEXT_WINDOWS,
+  DEFAULT_CONTEXT_WINDOW,
   IMAGE_TOKEN_ESTIMATE,
   computeCost,
+  contextRatio,
   estimateApiTokens,
   estimateTokens,
   formatCost,
@@ -10,6 +13,7 @@ import {
   isPrice,
   normalizeUsage,
   numOrNull,
+  resolveContextWindow,
   resolvePrice,
   usageToRecord,
 } from '../js/usage.js';
@@ -141,4 +145,42 @@ test('formatCost 人民币小额给出足够精度', () => {
   assert.equal(formatCost(0.5), '¥0.5000');
   assert.equal(formatCost(1.234), '¥1.23');
   assert.equal(formatCost(123.4), '¥123');
+});
+
+test('resolveContextWindow 优先用服务里手填的上限', () => {
+  assert.deepEqual(resolveContextWindow({ contextLength: 8000 }, 'gpt-4o'), { tokens: 8000, source: 'provider' });
+  assert.deepEqual(resolveContextWindow({ contextLength: '32000' }, 'gpt-4o'), { tokens: 32000, source: 'provider' });
+  assert.deepEqual(resolveContextWindow({ contextLength: 1234.6 }, 'gpt-4o'), { tokens: 1235, source: 'provider' });
+});
+
+test('resolveContextWindow 手填非法时回退内置表', () => {
+  assert.deepEqual(resolveContextWindow({ contextLength: 0 }, 'gpt-4o'), { tokens: 128000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow({ contextLength: -1 }, 'claude-3-5-sonnet'), { tokens: 200000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow({ contextLength: 'abc' }, 'deepseek-chat'), { tokens: 64000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow({}, 'gpt-4o'), { tokens: 128000, source: 'builtin' });
+});
+
+test('resolveContextWindow 按模型名匹配内置表（最具体在前）', () => {
+  assert.deepEqual(resolveContextWindow(null, 'gemini-2.5-pro'), { tokens: 2000000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow(null, 'gemini-2.5-flash'), { tokens: 1000000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow(null, 'claude-3-5-sonnet'), { tokens: 200000, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow(null, 'gpt-3.5-turbo'), { tokens: 16385, source: 'builtin' });
+  assert.deepEqual(resolveContextWindow(null, 'deepseek-chat'), { tokens: 64000, source: 'builtin' });
+});
+
+test('resolveContextWindow 匹配不到时用默认上限', () => {
+  assert.deepEqual(resolveContextWindow(null, 'some-local-model'), { tokens: DEFAULT_CONTEXT_WINDOW, source: 'default' });
+  assert.deepEqual(resolveContextWindow(null, ''), { tokens: DEFAULT_CONTEXT_WINDOW, source: 'default' });
+  assert.deepEqual(resolveContextWindow(undefined, undefined), { tokens: DEFAULT_CONTEXT_WINDOW, source: 'default' });
+});
+
+test('contextRatio 收敛到 0~1，上限非法时返回 0', () => {
+  assert.equal(contextRatio(64000, 128000), 0.5);
+  assert.equal(contextRatio(0, 128000), 0);
+  assert.equal(contextRatio(999999, 128000), 1);
+  assert.equal(contextRatio(-5, 128000), 0);
+  assert.equal(contextRatio(100, 0), 0);
+  assert.equal(contextRatio(100, null), 0);
+  assert.equal(contextRatio(null, 128000), 0);
+  assert.equal(contextRatio('abc', 128000), 0);
 });

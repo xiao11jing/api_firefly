@@ -507,6 +507,16 @@ try {
   const lightBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor);
   const lightInk = await page.evaluate(() => getComputedStyle(document.body).color);
   check('明亮配色实际生效', lightBg === 'rgb(255, 255, 255)' && lightInk === 'rgb(26, 31, 39)', `${lightBg} / ${lightInk}`);
+  // 明亮主题的次级文字改为正文同色（原 #8b94a2 在浅色背景上偏淡）
+  const faintLight = await page.evaluate(() => {
+    const el = document.createElement('div');
+    el.style.color = getComputedStyle(document.documentElement).getPropertyValue('--faint').trim();
+    document.body.appendChild(el);
+    const c = getComputedStyle(el).color;
+    el.remove();
+    return c;
+  });
+  check('明亮主题 --faint 已改为深色', faintLight === 'rgb(26, 31, 39)', faintLight);
   await page.click('#btn-close-settings');
   await page.screenshot({ path: join(OUT, '06-theme-light.png') });
   // 模型名 hover 必须跟随主题：此前写死白色，明亮主题下变成白字白底看不见
@@ -622,6 +632,51 @@ try {
   const pillBox = await page.locator('#model-pill').boundingBox();
   check('模型选择与发送同处一行', Math.abs(sendBox.y - pillBox.y) < 14, `send.y=${Math.round(sendBox.y)} pill.y=${Math.round(pillBox.y)}`);
   check('发送按钮在输入框右侧', sendBox.x > inputBox.x + inputBox.width / 2);
+
+  // ---------- 9a-2b. 上下文占用环 ----------
+  const ringInfo = () =>
+    page.evaluate(() => {
+      const ring = document.querySelector('#context-ring');
+      const m = /^([\d.]+) ([\d.]+)$/.exec(ring.querySelector('.ring-progress').getAttribute('stroke-dasharray') || '');
+      const rb = ring.getBoundingClientRect();
+      const pb = document.querySelector('#model-pill').getBoundingClientRect();
+      return {
+        visible: !ring.classList.contains('hidden'),
+        leftOfPill: rb.x + rb.width <= pb.x + 1,
+        filled: m ? Number(m[1]) / Number(m[2]) : null,
+        high: ring.classList.contains('high'),
+        title: ring.getAttribute('title') || '',
+      };
+    });
+  const ring0 = await ringInfo();
+  check('模型胶囊左侧显示上下文占用环', ring0.visible && ring0.leftOfPill, JSON.stringify({ visible: ring0.visible, leftOfPill: ring0.leftOfPill }));
+  check('占用环按本次请求的估算量填充', ring0.filled > 0 && ring0.filled < 0.2, `filled=${ring0.filled}`);
+  check('未匹配到模型时提示按默认上限', ring0.title.includes('默认值'), ring0.title.replace(/\n/g, ' | '));
+
+  // 手填一个很小的上下文上限 → 占用比例拉满并告警
+  const setContextLength = async (value) => {
+    await page.click('#btn-sidebar-settings');
+    await page.locator('#settings-mask:not(.hidden)').waitFor();
+    await page.click('#tab-api');
+    await page.locator('.provider-item').first().click();
+    await page.fill('#pf-contextLength', value);
+    await page.getByRole('button', { name: '保存' }).click();
+    await page.click('#btn-close-settings');
+    await page.waitForTimeout(250);
+  };
+  await setContextLength('10');
+  const ringHigh = await ringInfo();
+  check('手填上下文长度后占用比例拉满', ringHigh.filled === 1, `filled=${ringHigh.filled}`);
+  check('占用超过 90% 时进入告警态', ringHigh.high);
+  check('提示写明上限来自服务配置', ringHigh.title.includes('该服务填写的上下文长度'), ringHigh.title.replace(/\n/g, ' | '));
+  check('上下文长度已落盘', (await readState()).providers[0].contextLength === 10);
+  await page.screenshot({ path: join(OUT, '16-context-ring.png') });
+
+  await setContextLength('');
+  const ringBack = await ringInfo();
+  check('清空后回到内置参考表', ringBack.filled < 0.2 && !ringBack.high && ringBack.title.includes('默认值'), `filled=${ringBack.filled}`);
+  check('清空后上下文长度记为 null', (await readState()).providers[0].contextLength === null);
+
   const hoverDark = await modelHoverColors();
   check('暗色主题下模型名 hover 取强调色', hoverDark.label === hoverDark.accent, JSON.stringify(hoverDark));
   await page.screenshot({ path: join(OUT, '13-composer-layout.png') });
@@ -647,6 +702,11 @@ try {
   await page.waitForTimeout(300);
   check('消息头显示自定义用户名', (await page.locator('.msg.user .msg-name').first().textContent()) === '小明');
   check('AI 消息头显示自定义名称', (await page.locator('.msg.assistant .msg-name').first().textContent()) === '小助手');
+  check(
+    '消息头像为 30px',
+    await page.evaluate(() => Math.round(document.querySelector('.msg .msg-avatar').getBoundingClientRect().width) === 30)
+  );
+  check('左上角改为 AI 名称', (await page.locator('.brand-name').textContent()) === '小助手');
 
   // 头像：本地图片 → 双方各设置一张
   await page.click('#btn-sidebar-settings');
@@ -661,6 +721,7 @@ try {
   check('用户头像预览已应用图片', await page.evaluate(() => document.querySelector('#avatar-preview-user').style.backgroundImage.startsWith('url("data:image/')));
   check('AI 头像预览已应用图片', await page.evaluate(() => document.querySelector('#avatar-preview-ai').style.backgroundImage.startsWith('url("data:image/')));
   check('出现移除头像按钮', (await page.locator('#btn-avatar-user-clear:not(.hidden), #btn-avatar-ai-clear:not(.hidden)').count()) === 2);
+  check('左上角头像与个人资料一致', (await page.locator('.brand-avatar img').count()) === 1);
   await page.screenshot({ path: join(OUT, '14-profile-settings.png') });
 
   const profileState = (await readState()).settings.profile;

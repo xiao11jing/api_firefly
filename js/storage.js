@@ -1,7 +1,7 @@
 /**
  * storage.js — 本地持久化（纯逻辑，storage 参数可注入，便于测试）
  */
-import { isPrice, normalizeUsage } from './usage.js';
+import { isPrice, normalizeUsage, numOrNull } from './usage.js';
 import { normalizeBgOpacity } from './background.js';
 import { DEFAULT_AI_NAME, DEFAULT_USER_NAME, defaultProfile, normalizeProfileName } from './profile.js';
 
@@ -450,6 +450,7 @@ export function updateMessage(state, sessionId, messageId, patch) {
 }
 
 export function saveProvider(state, provider) {
+  const contextLength = numOrNull(provider.contextLength);
   const clean = {
     id: provider.id || uid(),
     name: String(provider.name || '').trim() || '未命名服务',
@@ -459,6 +460,8 @@ export function saveProvider(state, provider) {
     price: isPrice(provider.price)
       ? { input: Number(provider.price.input), output: Number(provider.price.output) }
       : null,
+    // 上下文窗口上限：留空则回退内置参考表（见 usage.js 的 resolveContextWindow）
+    contextLength: contextLength !== null && contextLength > 0 ? Math.round(contextLength) : null,
     models: Array.isArray(provider.models)
       ? provider.models.map((m) => String(m).trim()).filter(Boolean)
       : [],

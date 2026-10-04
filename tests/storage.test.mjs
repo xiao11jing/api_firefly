@@ -282,6 +282,20 @@ test('saveProvider 归一化单价：非法或缺失记为 null', () => {
   assert.equal(noPrice.price, null);
 });
 
+test('saveProvider 归一化上下文长度：非正数或非法记为 null', () => {
+  const state = defaultState();
+  const withLen = saveProvider(state, { name: 'A', baseUrl: 'https://a.com', models: ['m'], contextLength: '128000' });
+  assert.equal(withLen.contextLength, 128000);
+
+  const rounded = saveProvider(state, { name: 'B', baseUrl: 'https://b.com', models: ['m'], contextLength: 8192.7 });
+  assert.equal(rounded.contextLength, 8193);
+
+  for (const bad of [0, -1, '', 'abc', null, undefined]) {
+    const p = saveProvider(state, { name: 'C', baseUrl: 'https://c.com', models: ['m'], contextLength: bad });
+    assert.equal(p.contextLength, null, `contextLength=${String(bad)} 应记为 null`);
+  }
+});
+
 test('回复消息记录模型、批次与用量，并随状态持久化', () => {
   const state = defaultState();
   const s = createSession(state);
