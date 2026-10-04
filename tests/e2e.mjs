@@ -58,6 +58,21 @@ const activeSessionState = async () => {
   const s = await readState();
   return s.sessions.find((x) => x.id === s.activeSessionId) || null;
 };
+/** 悬停模型名取到实际文字色，同时解析当前主题的强调色，用于断言 hover 跟随主题 */
+const modelHoverColors = async () => {
+  await page.hover('#model-select');
+  await page.waitForTimeout(150);
+  const label = await page.evaluate(() => getComputedStyle(document.querySelector('#model-label')).color);
+  const accent = await page.evaluate(() => {
+    const el = document.createElement('div');
+    el.style.color = getComputedStyle(document.documentElement).getPropertyValue('--accent-strong').trim();
+    document.body.appendChild(el);
+    const c = getComputedStyle(el).color;
+    el.remove();
+    return c;
+  });
+  return { label, accent };
+};
 page.on('console', (m) => {
   if (m.type() !== 'error') return;
   const loc = (m.location && m.location().url) || '';
@@ -494,6 +509,13 @@ try {
   check('明亮配色实际生效', lightBg === 'rgb(255, 255, 255)' && lightInk === 'rgb(26, 31, 39)', `${lightBg} / ${lightInk}`);
   await page.click('#btn-close-settings');
   await page.screenshot({ path: join(OUT, '06-theme-light.png') });
+  // 模型名 hover 必须跟随主题：此前写死白色，明亮主题下变成白字白底看不见
+  const hoverLight = await modelHoverColors();
+  check(
+    '明亮主题下模型名 hover 不是白字且取强调色',
+    hoverLight.label === hoverLight.accent && hoverLight.label !== 'rgb(255, 255, 255)',
+    JSON.stringify(hoverLight)
+  );
 
   await page.reload({ waitUntil: 'networkidle' });
   check('刷新后主题仍是明亮', (await page.getAttribute('html', 'data-theme')) === 'light');
@@ -527,25 +549,26 @@ try {
   check('切换设置面板时弹窗尺寸不变', new Set(modalSizes).size === 1, modalSizes.join(' / '));
 
   await page.click('#tab-appearance');
-  const sidebarBefore = await page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
   await page.setInputFiles('#bg-input', IMG_PATH);
   await page.waitForTimeout(500);
   check('设置背景后根元素带 has-bg', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
-  // 背景要铺满整个应用区域：侧边栏等面板必须转为半透明，否则图片只在会话区可见
-  const sidebarAfter = await page.evaluate(() => getComputedStyle(document.querySelector('.sidebar')).backgroundColor);
-  // color-mix 的计算结果可能是 color(srgb r g b / a)，也可能是 rgba(...)，统一取出 alpha
-  const alphaOf = (css) => {
-    const slash = css.match(/\/\s*([\d.]+)\s*\)/);
-    if (slash) return Number(slash[1]);
-    const rgba = css.match(/rgba\([^)]*,\s*([\d.]+)\)/);
-    if (rgba) return Number(rgba[1]);
-    return 1; // 无 alpha 分量即完全不透明
-  };
-  const sidebarAlpha = alphaOf(sidebarAfter);
+  // 侧边栏与顶栏必须与中间对话区完全一致：不加底衬、不做模糊，否则图片呈现不一致
+  const panelStyles = await page.evaluate(() => {
+    const read = (sel) => {
+      const cs = getComputedStyle(document.querySelector(sel));
+      return { bg: cs.backgroundColor, filter: cs.backdropFilter || cs.webkitBackdropFilter || 'none' };
+    };
+    return { sidebar: read('.sidebar'), topbar: read('.topbar') };
+  });
   check(
-    '背景铺到侧边栏（面板转为半透明）',
-    sidebarBefore !== sidebarAfter && Number.isFinite(sidebarAlpha) && sidebarAlpha <= 0.4,
-    `${sidebarBefore} → ${sidebarAfter}`
+    '侧边栏与对话区一致（无底衬无模糊）',
+    panelStyles.sidebar.bg === 'rgba(0, 0, 0, 0)' && panelStyles.sidebar.filter === 'none',
+    JSON.stringify(panelStyles.sidebar)
+  );
+  check(
+    '顶栏与对话区一致（无底衬无模糊）',
+    panelStyles.topbar.bg === 'rgba(0, 0, 0, 0)' && panelStyles.topbar.filter === 'none',
+    JSON.stringify(panelStyles.topbar)
   );
   check(
     '背景层已应用本地图片',
@@ -599,6 +622,8 @@ try {
   const pillBox = await page.locator('#model-pill').boundingBox();
   check('模型选择与发送同处一行', Math.abs(sendBox.y - pillBox.y) < 14, `send.y=${Math.round(sendBox.y)} pill.y=${Math.round(pillBox.y)}`);
   check('发送按钮在输入框右侧', sendBox.x > inputBox.x + inputBox.width / 2);
+  const hoverDark = await modelHoverColors();
+  check('暗色主题下模型名 hover 取强调色', hoverDark.label === hoverDark.accent, JSON.stringify(hoverDark));
   await page.screenshot({ path: join(OUT, '13-composer-layout.png') });
 
   // ---------- 9b. 会话重命名（单击选中 / 双击进入编辑） ----------

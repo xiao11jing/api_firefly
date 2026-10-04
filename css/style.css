@@ -431,7 +431,8 @@ button { font-family: inherit; cursor: pointer; }
   white-space: nowrap;
   transition: color 0.15s;
 }
-.model-trigger:hover .model-label { color: #fff; }
+/* 悬停用主题强调色：不能用写死的白色，明亮主题下模型名会变成白字白底看不见 */
+.model-trigger:hover .model-label { color: var(--accent-strong); }
 .model-pill.attention .model-label { color: var(--accent-strong); }
 
 .pill-chevron {
@@ -1681,24 +1682,20 @@ mark.search-hit.active {
 }
 
 /*
- * 背景图开启后把应用抬到背景层之上，并让各面板大幅半透明，
- * 使图片铺满整个应用区域（含侧边栏与顶栏），而不是只在会话区可见。
- * 保留一层很淡的底衬 + 模糊，保证面板上的文字仍有足够对比度。
+ * 背景图开启后把应用抬到背景层之上。
+ * 侧边栏/顶栏/搜索栏不加任何底衬也不做模糊，使图片在这些区域与中间对话区呈现完全一致；
+ * 只有输入框与附件栏保留淡底衬（它们本身是「卡片」，需要可读的输入面）。
  * color-mix 不支持的浏览器会丢弃该声明，面板保持不透明，只是看不到背景。
  */
 html.has-bg .app {
   position: relative;
   z-index: 1;
 }
-html.has-bg .sidebar {
-  background: color-mix(in srgb, var(--sidebar) 32%, transparent);
-  backdrop-filter: blur(12px);
-}
-html.has-bg .topbar {
-  background: color-mix(in srgb, var(--bg) 32%, transparent);
-}
+html.has-bg .sidebar,
+html.has-bg .topbar,
 html.has-bg .search-bar {
-  background: color-mix(in srgb, var(--surface) 42%, transparent);
+  background: transparent;
+  backdrop-filter: none;
 }
 html.has-bg .composer,
 html.has-bg .attach-bar {
