@@ -703,8 +703,16 @@ try {
   check('消息头显示自定义用户名', (await page.locator('.msg.user .msg-name').first().textContent()) === '小明');
   check('AI 消息头显示自定义名称', (await page.locator('.msg.assistant .msg-name').first().textContent()) === '小助手');
   check(
-    '消息头像为 30px',
-    await page.evaluate(() => Math.round(document.querySelector('.msg .msg-avatar').getBoundingClientRect().width) === 30)
+    '消息头像与左上角头像都是 52px',
+    await page.evaluate(
+      () =>
+        Math.round(document.querySelector('.msg .msg-avatar').getBoundingClientRect().width) === 52 &&
+        Math.round(document.querySelector('.brand-avatar').getBoundingClientRect().width) === 52
+    )
+  );
+  check(
+    '消息区名称字号 18px',
+    await page.evaluate(() => getComputedStyle(document.querySelector('.msg-name')).fontSize === '18px')
   );
   check('左上角改为 AI 名称', (await page.locator('.brand-name').textContent()) === '小助手');
 

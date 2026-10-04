@@ -191,9 +191,9 @@ button { font-family: inherit; cursor: pointer; }
 
 /* 左上角显示 AI 的头像与名称，跟随「个人资料」里的设置 */
 .brand .brand-avatar {
-  width: 28px;
-  height: 28px;
-  font-size: 12px;
+  width: 52px;
+  height: 52px;
+  font-size: 20px;
 }
 
 .brand-name {
@@ -777,8 +777,8 @@ mark.search-hit.active {
 .role-head {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-bottom: 6px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 /* 用户消息整体右对齐，消息头镜像过来让头像贴右边缘 */
 .msg.user .role-head { flex-direction: row-reverse; }
@@ -787,14 +787,14 @@ mark.search-hit.active {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
+  width: 52px;
+  height: 52px;
   flex-shrink: 0;
   border-radius: 50%;
   overflow: hidden;
   background: var(--accent);
   color: #fff;
-  font-size: 13px;
+  font-size: 20px;
   font-weight: 600;
   line-height: 1;
   user-select: none;
@@ -802,10 +802,10 @@ mark.search-hit.active {
 .msg-avatar img { width: 100%; height: 100%; object-fit: cover; }
 
 .msg-name {
-  font-size: 11.5px;
+  font-size: 18px;
   font-weight: 500;
   color: var(--muted);
-  max-width: 220px;
+  max-width: 260px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
