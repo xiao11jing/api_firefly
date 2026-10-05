@@ -123,7 +123,8 @@ page.on('pageerror', (e) => pageErrors.push(String(e)));
 try {
   // ---------- 1. 首屏：无 provider 的空状态 ----------
   await page.goto(APP, { waitUntil: 'networkidle' });
-  check('首屏显示未配置提示', await page.locator('.empty-state h3').textContent() === '还没有配置 API 服务');
+  check('首屏显示欢迎标题', (await page.locator('.empty-state h3').textContent()) === 'AI来陪你聊天和思考');
+  check('首屏保留未配置提示', (await page.locator('.welcome-note').textContent()).includes('还没有配置 API 服务'));
   check('侧边栏左下角有设置按钮', await page.locator('#btn-sidebar-settings').isVisible());
   await page.screenshot({ path: join(OUT, '01-empty.png') });
 
@@ -185,14 +186,19 @@ try {
   check('页脚显示耗时', /用时 \d+\.\ds/.test(singleFoot), singleFoot);
   await page.screenshot({ path: join(OUT, '03-chat.png') });
 
-  // ---------- 5. 刷新后持久化 ----------
+  // ---------- 5. 刷新后持久化（启动即新建对话：刷新回到欢迎页，旧会话从侧栏点开） ----------
   await page.reload({ waitUntil: 'networkidle' });
-  check('刷新后消息仍在', (await page.locator('.msg.user').count()) >= 1);
+  check('刷新后回到新建对话欢迎页', await page.locator('.empty-state.welcome').isVisible());
   check('刷新后 provider 仍在', (await page.locator('#model-label').textContent()).includes('mock-model'));
+  // 启动即新建对话：旧会话从侧栏点开，消息仍在（数据不丢，只是不再自动定位）
+  await page.locator('.session-item', { hasText: '你好，这是端到端测试' }).first().click();
+  await page.waitForSelector('.msg.user', { timeout: 5000 });
+  check('刷新后消息仍在', (await page.locator('.msg.user').count()) >= 1);
 
   // ---------- 6. 新会话 + 多图附件 ----------
   await page.click('#btn-new-chat');
-  check('新会话进入空状态', (await page.locator('.empty-state h3').textContent()) === '开始新对话');
+  check('新会话进入欢迎页', (await page.locator('.empty-state h3').textContent()) === 'AI来陪你聊天和思考');
+  check('新会话为欢迎布局', await page.evaluate(() => document.documentElement.classList.contains('is-welcome')));
   check(
     '附件入口为加号图标',
     (await page.locator('#btn-attach circle').count()) === 0 &&
@@ -641,6 +647,9 @@ try {
 
   await page.reload({ waitUntil: 'networkidle' });
   check('刷新后背景仍在', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
+  // 启动即新建对话：点回刷新前的会话，后续占用环/资料断言需要有消息的上下文
+  await page.locator('.session-item', { hasText: '读一下这些文档' }).first().click();
+  await page.waitForSelector('.msg.user', { timeout: 5000 });
   await page.click('#btn-sidebar-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#btn-bg-clear');
@@ -793,8 +802,10 @@ try {
   check('AI 消息头：头像在左、名称在右', headBoxes.ai && headBoxes.ai.avatarX < headBoxes.ai.nameX, JSON.stringify(headBoxes.ai));
   await page.screenshot({ path: join(OUT, '15-profile-messages.png') });
 
-  // 刷新后仍生效
+  // 刷新后仍生效（启动即新建对话：先点开刷新前的有消息会话）
   await page.reload({ waitUntil: 'networkidle' });
+  await page.locator('.session-item', { hasText: '读一下这些文档' }).first().click();
+  await page.waitForSelector('.msg.user', { timeout: 5000 });
   check('刷新后消息头仍是自定义名称', (await page.locator('.msg.user .msg-name').first().textContent()) === '小明');
   check('刷新后头像仍在', (await page.locator('.msg.assistant .msg-avatar img').count()) >= 1);
 
@@ -1114,6 +1125,81 @@ try {
   check('关闭后桌宠隐藏', await page.evaluate(() => document.querySelector('#pet').hidden));
   check('关闭已落盘', (await readState()).settings.pet.visible === false);
 
+  // ---------- 9a-w. 欢迎页：Chat/Learn 新建对话样式与 Learn 快捷入口 ----------
+  if (await page.locator('#settings-mask:not(.hidden)').count()) {
+    await page.click('#btn-close-settings');
+    await page.waitForTimeout(150);
+  }
+  await page.click('#btn-new-chat');
+  await page.waitForTimeout(150);
+  const aiNameNow = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('ai-multi-chat-v1')).settings.profile.ai.name || 'AI'
+  );
+  check('欢迎布局生效', await page.evaluate(() => document.documentElement.classList.contains('is-welcome')));
+  check(
+    'Chat 欢迎标题跟设置里的 AI 名称',
+    (await page.locator('#welcome-title').textContent()) === `${aiNameNow}来陪你聊天和思考`
+  );
+
+  // 切 Learn：显示学习欢迎页，不跳设置
+  await page.click('#mode-learn');
+  await page.waitForTimeout(200);
+  check('Learn 段高亮', (await page.getAttribute('#mode-learn', 'aria-selected')) === 'true');
+  check(
+    '切 Learn 不打开设置',
+    await page.evaluate(() => document.querySelector('#settings-mask').classList.contains('hidden'))
+  );
+  check('Learn 欢迎标题', (await page.locator('#welcome-title').textContent()) === `${aiNameNow}来当你的学习搭子`);
+  check('+ 旁出现选择学习主题按钮', await page.locator('#btn-learn-topic').isVisible());
+  check('进度抽屉未自动弹出', await page.locator('#learn-drawer').isHidden());
+  await page.screenshot({ path: join(OUT, '26-welcome-learn.png') });
+
+  // 点按钮 → 打开设置的学习面板
+  await page.click('#btn-learn-topic');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  check('按钮直达设置学习面板', await page.locator('#panel-learn').isVisible());
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(150);
+
+  // 切回 Chat：标题与入口按钮复原
+  await page.click('#mode-chat');
+  await page.waitForTimeout(150);
+  check('切回 Chat 标题复原', (await page.locator('#welcome-title').textContent()) === `${aiNameNow}来陪你聊天和思考`);
+  check('Chat 下主题入口隐藏', await page.locator('#btn-learn-topic').isHidden());
+
+  // Learn 下没关联主题直接发消息 → 自动创建全新学习主题
+  await page.click('#mode-learn');
+  await page.waitForTimeout(150);
+  await page.fill('#input', '帮我整理一下注意力机制');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.msg.assistant .prose')].some((el) => el.textContent.includes('模拟回复')),
+    { timeout: 15000 }
+  );
+  const autoState = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const s = JSON.parse(localStorage.getItem('ai-multi-chat-v1'));
+    const ses = s.sessions.find((x) => x.id === s.activeSessionId);
+    return { topics: ls.topics, activeTopicId: ls.activeTopicId, link: ses.learnTopicId, uiMode: ses.uiMode };
+  });
+  check(
+    '发消息自动创建主题（首句命名·计划驱动）',
+    autoState.topics.length === 1 &&
+      autoState.topics[0].name === '帮我整理一下注意力机制' &&
+      autoState.topics[0].mode === 'plan',
+    autoState.topics.map((t) => `${t.name}/${t.mode}`).join(' | ')
+  );
+  check('自动主题已关联本会话', !!autoState.link && autoState.link === autoState.activeTopicId);
+  check('自动关联后仍是 Learn 模式', autoState.uiMode === 'learn');
+  check('关联后主题入口消失', await page.locator('#btn-learn-topic').isHidden());
+  check('发出消息后离开欢迎布局', await page.evaluate(() => !document.documentElement.classList.contains('is-welcome')));
+  const autoReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const autoSys = (autoReq.messages || []).find((m) => m.role === 'system');
+  check(
+    '自动创建的主题立即参与提示词注入',
+    !!autoSys && autoSys.content.includes('Learn 模式常驻规则') && autoSys.content.includes('帮我整理一下注意力机制')
+  );
+
   // ---------- 9b. Learn 模式：建主题 → 关联会话 → 访谈上下文 → 生成计划 → 推进条目 ----------
   // 上一节可能停在设置弹窗内，先确保干净的开合路径
   if (await page.locator('#settings-mask:not(.hidden)').count()) {
@@ -1146,8 +1232,16 @@ try {
   await page.waitForTimeout(150);
   await page.click('#btn-pill-learn');
   await page.locator('#learn-menu:not(.hidden)').waitFor();
-  check('学习菜单列出主题', (await page.locator('#learn-menu .menu-item').count()) === 2); // 不关联 + 主题
-  await page.locator('#learn-menu .menu-item').nth(1).click();
+  const menuTopicTotal = await page.evaluate(
+    () => JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1')).topics.length
+  );
+  check(
+    '学习菜单列出全部主题加不关联项',
+    (await page.locator('#learn-menu .menu-item').count()) === menuTopicTotal + 1,
+    `topics=${menuTopicTotal}`
+  );
+  // 按名称选中本场景新建的主题（数组里可能还有其他场景留下的主题）
+  await page.locator('#learn-menu .menu-item', { hasText: 'Transformer 学习' }).click();
   await page.waitForTimeout(200);
   const learnLink = await page.evaluate(() => {
     const s = JSON.parse(localStorage.getItem('ai-multi-chat-v1'));

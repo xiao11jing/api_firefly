@@ -594,7 +594,7 @@ test('归一化丢弃非法的 learnTopicId', () => {
   assert.equal(loaded.sessions[1].learnTopicId, 'ok');
 });
 
-test('uiMode：关联主题即 Learn，解绑回落 Chat，显式暂停可保留', () => {
+test('uiMode：关联主题即 Learn，解绑保持当前模式，learn 可无主题', () => {
   const state = defaultState();
   const s = createSession(state);
   assert.equal(s.uiMode, 'chat');
@@ -605,30 +605,34 @@ test('uiMode：关联主题即 Learn，解绑回落 Chat，显式暂停可保留
   // 手动切回 chat（保留关联）
   assert.equal(setSessionUiMode(state, s.id, 'chat'), 'chat');
   assert.equal(s.learnTopicId, 't1');
-  // 无主题时不允许切 learn
+  // learn 不再要求主题
   const s2 = createSession(state);
-  assert.equal(setSessionUiMode(state, s2.id, 'learn'), 'chat');
-  assert.equal(s2.uiMode, 'chat');
-  // 解绑 → chat
+  assert.equal(setSessionUiMode(state, s2.id, 'learn'), 'learn');
+  assert.equal(s2.learnTopicId, undefined);
+  // 解绑：保持当前模式（此刻是 chat）
   setSessionLearnTopic(state, s.id, null);
   assert.equal(s.uiMode, 'chat');
+  // 解绑后仍在 learn 的会话停留在 learn（学习欢迎页）
+  setSessionLearnTopic(state, s.id, 't2'); // learn
+  setSessionLearnTopic(state, s.id, null);
+  assert.equal(s.uiMode, 'learn');
   // 非法模式忽略
-  assert.equal(setSessionUiMode(state, s.id, 'hack'), 'chat');
-  assert.equal(setSessionUiMode(state, 'missing', 'learn'), null);
+  assert.equal(setSessionUiMode(state, s.id, 'hack'), 'learn');
+  assert.equal(setSessionUiMode(state, 'missing', 'chat'), null);
 });
 
-test('uiMode 归一化：显式值优先，历史数据有关联即 learn，learn 无主题回退 chat', () => {
+test('uiMode 归一化：显式值优先（learn 可无主题），历史数据有关联即 learn', () => {
   const state = defaultState();
   state.sessions = [
     { id: 'a', learnTopicId: 't1' }, // 历史数据无 uiMode → learn
     { id: 'b' }, // 无关联 → chat
     { id: 'c', learnTopicId: 't1', uiMode: 'chat' }, // 显式暂停保留
-    { id: 'd', uiMode: 'learn' }, // learn 无主题 → 回退 chat
+    { id: 'd', uiMode: 'learn' }, // learn 无主题 → 保留 learn（学习欢迎页）
     { id: 'e', uiMode: 42, learnTopicId: 't2' }, // 非法显式值 → 按推导 learn
   ];
   const st = fakeStorage();
   st.setItem(STORAGE_KEY, JSON.stringify(state));
   const loaded = loadState(st);
   const byId = Object.fromEntries(loaded.sessions.map((x) => [x.id, x.uiMode]));
-  assert.deepEqual(byId, { a: 'learn', b: 'chat', c: 'chat', d: 'chat', e: 'learn' });
+  assert.deepEqual(byId, { a: 'learn', b: 'chat', c: 'chat', d: 'learn', e: 'learn' });
 });

@@ -445,27 +445,43 @@ function ensureMsgCol() {
   return col;
 }
 
+/**
+ * 欢迎页（新建对话样式）：标题随顶栏模式与设置里的 AI 名称变化。
+ * 输入框上移的布局由 html.is-welcome 控制（renderMessages 里同步开关）。
+ */
 function renderEmptyState() {
   const box = $('#messages');
   box.innerHTML = '';
-  const wrap = document.createElement('div');
-  wrap.className = 'empty-state';
+  const session = store.getActiveSession(state);
+  const aiName = profileOf('ai').name;
+  const learn = !!(session && session.uiMode === 'learn');
+  const title = learn ? `${aiName}来当你的学习搭子` : `${aiName}来陪你聊天和思考`;
 
+  const wrap = document.createElement('div');
+  wrap.className = 'empty-state welcome';
+
+  const h = document.createElement('h3');
+  h.className = 'welcome-title';
+  h.id = 'welcome-title';
+  h.textContent = title;
+  wrap.appendChild(h);
+
+  const note = document.createElement('p');
+  note.className = 'welcome-note';
   if (!state.providers.length) {
-    wrap.innerHTML = `
-      <div class="es-mark"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 6h16v10H8l-4 4V6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
-      <h3>还没有配置 API 服务</h3>
-      <p>添加任意兼容 OpenAI Chat Completions 格式的接口（OpenAI、DeepSeek、通义、本地 Ollama 等），即可开始多模型对话。</p>`;
+    note.textContent = '还没有配置 API 服务：添加任意兼容 OpenAI Chat Completions 格式的接口（OpenAI、DeepSeek、通义、本地 Ollama 等）即可开始。';
+    wrap.appendChild(note);
     const btn = document.createElement('button');
     btn.className = 'primary-btn';
     btn.textContent = '去配置 API';
     btn.addEventListener('click', () => openSettings('api'));
     wrap.appendChild(btn);
+  } else if (learn) {
+    note.textContent = '选择或新建学习主题后，对话会带上你的学习计划与进度；直接发消息会自动创建一个新主题。';
+    wrap.appendChild(note);
   } else {
-    wrap.innerHTML = `
-      <div class="es-mark"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 6h16v10H8l-4 4V6Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
-      <h3>开始新对话</h3>
-      <p>输入消息开始聊天，可附带图片与文档；顶部可切换模型或开启对比模式。</p>`;
+    note.textContent = '输入消息开始聊天，可附带图片与文档；顶部可切换模型、开启对比模式或进入 Learn。';
+    wrap.appendChild(note);
   }
   box.appendChild(wrap);
 }
@@ -696,9 +712,11 @@ function renderMessageEl(msg) {
 function renderMessages({ keepScroll = false } = {}) {
   const box = $('#messages');
   const session = store.getActiveSession(state);
+  const isEmpty = !session || !session.messages.length;
+  document.documentElement.classList.toggle('is-welcome', isEmpty);
   renderSessionTools(session);
   renderContextRing();
-  if (!session || !session.messages.length) {
+  if (isEmpty) {
     renderEmptyState();
     $('#topbar-title').textContent = session ? session.title : '新会话';
     refreshSearch();
@@ -733,6 +751,17 @@ function renderSessionTools(session) {
   renderPromptFlag();
   renderLearnFlag();
   renderModeSeg();
+  renderLearnTopicBtn();
+}
+
+/** 输入框「+」旁的学习主题入口：Learn 模式 + 空会话 + 未关联时显示 */
+function renderLearnTopicBtn() {
+  const session = store.getActiveSession(state);
+  const btn = $('#btn-learn-topic');
+  if (!btn) return;
+  const show =
+    !!session && session.uiMode === 'learn' && !session.messages.length && !session.learnTopicId;
+  btn.classList.toggle('hidden', !show);
 }
 
 /** 同一批对比回复左右分栏展示 */
@@ -799,6 +828,18 @@ async function send() {
   const session = store.getActiveSession(state) || store.createSession(state, state.selectedModel);
 
   const text = $('#input').value.trim();
+
+  // Learn 模式下没关联主题就直接发消息 → 把本次会话当成一个全新的学习主题（首句命名，计划驱动）
+  if (session.uiMode === 'learn' && !session.learnTopicId) {
+    const topicName = text ? store.sessionTitleFrom(text, 20) : '新学习主题';
+    const topic = createTopic({ name: topicName, mode: 'plan', at: Date.now() });
+    learnState.topics.push(topic);
+    learnState.activeTopicId = topic.id;
+    store.setSessionLearnTopic(state, session.id, topic.id);
+    persist();
+    await persistLearn();
+    toast(`已创建学习主题：${topic.name}`);
+  }
   const content = [];
   if (text) content.push({ type: 'text', text });
   content.push(...toMessageParts(attachments));
@@ -1274,9 +1315,18 @@ function resetLearnForm() {
   $('#lf-stage').value = '';
   $('#lf-time').value = '';
   $('#btn-del-topic').classList.add('hidden');
+  $('#btn-learn-attach').classList.add('hidden');
   renderLearnTopicList();
   renderLearnPlanList();
   $('#lf-name').focus();
+}
+
+/** 「关联到本会话」按钮：仅在选中了主题且当前会话未关联它时出现 */
+function renderLearnAttachBtn() {
+  const id = $('#lf-id').value;
+  const session = store.getActiveSession(state);
+  const linked = !!session && session.learnTopicId === id;
+  $('#btn-learn-attach').classList.toggle('hidden', !id || linked);
 }
 
 function fillLearnForm(id) {
@@ -1290,6 +1340,7 @@ function fillLearnForm(id) {
   $('#lf-stage').value = t.priorStage || '';
   $('#lf-time').value = t.availability || '';
   $('#btn-del-topic').classList.remove('hidden');
+  renderLearnAttachBtn();
   renderLearnTopicList();
   renderLearnPlanList();
 }
@@ -1448,34 +1499,37 @@ function openLearnDrawer() {
   document.documentElement.classList.add('has-learn-drawer');
 }
 
-/** 顶栏 Chat / Learn 切换。Learn 需要已关联主题，否则引导去设置创建 */
+/** 顶栏 Chat / Learn 切换。Learn 无主题时显示学习欢迎页（不跳设置）；有主题且会话已有消息时开进度抽屉 */
 function switchUiMode(mode) {
   const session = store.getActiveSession(state);
   if (!session) return;
   if (mode === 'learn') {
-    if (!session.learnTopicId) {
-      toast('请先创建或选择学习主题', 'error');
-      openSettings('learn');
-      return;
-    }
-    // 已在 Learn 且面板开着 → 收起；否则进入 Learn 并打开进度面板
-    if (session.uiMode === 'learn' && learnDrawerOpen()) {
-      closeLearnDrawer();
-      return;
-    }
     if (session.uiMode !== 'learn') {
       store.setSessionUiMode(state, session.id, 'learn');
       persist();
       renderModeSeg();
       renderLearnFlag();
+      renderMessages(); // 欢迎标题 / 主题入口随模式更新
     }
-    openLearnDrawer();
+    const topic = sessionTopic(session);
+    if (topic && session.messages.length) {
+      // 已在 Learn 再点一次 → 开合进度抽屉
+      if (learnDrawerOpen()) closeLearnDrawer();
+      else openLearnDrawer();
+    } else if (!topic && session.messages.length) {
+      // 聊了一半才进 Learn：引导先关联主题（欢迎页场景不走这条）
+      toast('请先选择学习主题', 'error');
+      openSettings('learn');
+    } else {
+      closeLearnDrawer(); // 空会话 → 学习欢迎页
+    }
   } else {
     if (session.uiMode !== 'chat') {
       store.setSessionUiMode(state, session.id, 'chat');
       persist();
       renderModeSeg();
       renderLearnFlag();
+      renderMessages();
     }
     closeLearnDrawer();
   }
@@ -2756,6 +2810,14 @@ function bind() {
   $('#learn-form').addEventListener('submit', saveLearnForm);
   $('#btn-del-topic').addEventListener('click', deleteLearnTopic);
   $('#btn-lf-add-item').addEventListener('click', addLearnItem);
+  $('#btn-learn-topic').addEventListener('click', () => openSettings('learn'));
+  $('#btn-learn-attach').addEventListener('click', () => {
+    const id = $('#lf-id').value;
+    if (!id) return;
+    linkLearnTopic(id);
+    closeSettings();
+    $('#input').focus();
+  });
   $('#btn-export').addEventListener('click', exportSession);
   $('#btn-search').addEventListener('click', openSearch);
   $('#btn-search-close').addEventListener('click', closeSearch);
@@ -3068,7 +3130,9 @@ async function bootSplash() {
 // ---------- 启动 ----------
 
 async function init() {
-  if (!state.sessions.length) store.createSession(state, state.selectedModel);
+  // 启动即显示新建对话：active 不存在或有消息时新开；本来就是空会话则复用（防堆积）
+  const active = store.getActiveSession(state);
+  if (!active || active.messages.length) store.createSession(state, state.selectedModel);
   learnState = await learnStore.loadState();
   applyTheme(state.settings && state.settings.theme);
   applyBackground();

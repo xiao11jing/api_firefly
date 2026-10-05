@@ -232,7 +232,10 @@ export function systemPromptText(session) {
   return (session && session.systemPrompt && session.systemPrompt.text) || '';
 }
 
-/** 关联/解绑会话的学习主题；topicId 为 null 表示解绑。关联即进入 Learn 模式，解绑回落 Chat */
+/**
+ * 关联/解绑会话的学习主题；topicId 为 null 表示解绑。
+ * 关联会把会话带入 Learn 模式；解绑保持当前模式（留在学习欢迎页可重新关联）。
+ */
 export function setSessionLearnTopic(state, sessionId, topicId) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s) return null;
@@ -242,7 +245,6 @@ export function setSessionLearnTopic(state, sessionId, topicId) {
     s.uiMode = 'learn';
   } else {
     delete s.learnTopicId;
-    s.uiMode = 'chat';
   }
   s.updatedAt = Date.now();
   return s.learnTopicId;
@@ -250,13 +252,12 @@ export function setSessionLearnTopic(state, sessionId, topicId) {
 
 /**
  * 切换会话的顶栏模式（chat / learn）。
- * Learn 必须已关联主题，否则保持原模式；返回生效后的模式。
+ * learn 不再要求已关联主题（无主题 = 显示学习欢迎页）；返回生效后的模式。
  */
 export function setSessionUiMode(state, sessionId, mode) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s) return null;
   if (mode !== 'chat' && mode !== 'learn') return s.uiMode || 'chat';
-  if (mode === 'learn' && !s.learnTopicId) return s.uiMode || 'chat';
   s.uiMode = mode;
   s.updatedAt = Date.now();
   return s.uiMode;
@@ -378,7 +379,8 @@ function normalizeSession(s) {
   if (!s || typeof s !== 'object' || typeof s.id !== 'string') return null;
   const learnTopicId =
     typeof s.learnTopicId === 'string' && s.learnTopicId ? s.learnTopicId : null;
-  // uiMode：显式值优先；历史数据无此字段时，有关联主题即视为 Learn
+  // uiMode 是与主题解耦的顶栏模式开关：显式值优先（learn 可以没有主题 = 学习欢迎页）；
+  // 历史数据无此字段时，有关联主题推导为 learn。
   const uiMode =
     s.uiMode === 'chat' || s.uiMode === 'learn'
       ? s.uiMode
@@ -391,7 +393,7 @@ function normalizeSession(s) {
     model: s.model && typeof s.model === 'object' ? s.model : null,
     systemPrompt: normalizeSystemPrompt(s.systemPrompt),
     learnTopicId,
-    uiMode: learnTopicId || uiMode === 'chat' ? uiMode : 'chat', // Learn 无主题时回退 chat
+    uiMode,
     messages: Array.isArray(s.messages) ? s.messages.map(normalizeMessage).filter(Boolean) : [],
     createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
     updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),

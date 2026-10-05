@@ -2229,3 +2229,32 @@ html.has-bg .attach-bar {
 /* 学习进度抽屉打开时，主区域让出右侧空间，避免遮挡发送按钮与顶栏操作 */
 .main { transition: margin-right 0.2s ease; }
 html.has-learn-drawer .main { margin-right: min(400px, 94vw); }
+
+/* ---------- 欢迎页（新建对话样式） ---------- */
+/* 空会话：消息区不再撑满，输入框紧跟欢迎标题（上移到页面中上部） */
+html.is-welcome .messages {
+  flex: 0 0 auto;
+  padding-top: 15vh;
+  padding-bottom: 4px;
+}
+.empty-state.welcome {
+  height: auto;
+  gap: 6px;
+  padding: 0 24px 2px;
+}
+.welcome-title {
+  margin: 0;
+  font-size: 26px;
+  font-weight: 650;
+  color: var(--ink);
+  letter-spacing: 0.3px;
+  line-height: 1.35;
+}
+.welcome-note {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--faint);
+  max-width: 480px;
+  line-height: 1.7;
+}
+.empty-state.welcome .primary-btn { margin-top: 10px; }
