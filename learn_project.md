@@ -121,7 +121,7 @@
 ### 4.2 Schema（v1）
 
 ```
-localStorage["aic.chat.learn.v1"] = {
+localStorage["ai-multi-chat-learn-v1"] = {
   schemaVersion: 1,
   activeTopicId: "t_xxx",
   topics: [{
@@ -242,7 +242,12 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 
 > 每期完成即：更新相关测试 → `npm test` 全绿 → git commit（遵守 AGENTS.md）。
 
-### Phase 1 — 数据层（无 UI）
+### Phase 1 — 数据层（无 UI）✅ 已完成
+
+> 交付：`js/learn/learn-store.js`（schema 归一化、LocalStore、Vault 导出渲染）、
+> `js/learn/learn-quiz.js`（正确率窗口、推翻、问题状态机）、
+> `tests/learn-store.test.mjs` + `tests/learn-quiz.test.mjs`（34 项）。
+> 资料/复盘大文本走可注入的 IndexedDB key-value（`createIdbKv`），导出为纯函数 `exportTopic`。
 
 1. `learn-store.js`：schema 定义、LocalStore 读写、迁移占位（`schemaVersion`）、导出 Vault 的 Markdown 生成
 2. `learn-quiz.js`：正确率窗口计算、推翻规则、问题清单状态机（纯函数）
