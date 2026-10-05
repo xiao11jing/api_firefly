@@ -4,6 +4,7 @@
 import { isPrice, normalizeUsage, numOrNull } from './usage.js';
 import { normalizeBgOpacity } from './background.js';
 import { DEFAULT_AI_NAME, DEFAULT_USER_NAME, defaultProfile, normalizeProfileName } from './profile.js';
+import { normalizeSplash } from './splash.js';
 
 export const STORAGE_KEY = 'ai-multi-chat-v1';
 
@@ -30,7 +31,7 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile() },
+    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile(), splash: null },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
     promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
@@ -89,6 +90,13 @@ export function normalizeBackground(value) {
   const dataUrl = normalizeImageDataUrl(value.dataUrl);
   if (!dataUrl) return null;
   return { dataUrl, opacity: normalizeBgOpacity(value.opacity) };
+}
+
+/** 设置开屏动画元数据，meta 传 null 表示关闭；返回生效后的值 */
+export function setSplash(state, meta) {
+  const splash = normalizeSplash(meta);
+  state.settings = { ...(state.settings || {}), splash };
+  return splash;
 }
 
 /** 归一化单个身份（用户 / AI）的名称与头像 */
@@ -208,6 +216,7 @@ function normalizeState(s) {
       theme: normalizeTheme(s.settings && s.settings.theme),
       background: normalizeBackground(s.settings && s.settings.background),
       profile: normalizeProfile(s.settings && s.settings.profile),
+      splash: normalizeSplash(s.settings && s.settings.splash),
     },
     compare: normalizeCompare(s.compare),
     promptTemplates: Array.isArray(s.promptTemplates)

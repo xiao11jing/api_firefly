@@ -3,7 +3,7 @@
  * 运行：node tests/e2e.mjs
  */
 import { chromium } from 'playwright-core';
-import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MOCK_VERSION } from './mock-server.mjs';
 
@@ -34,6 +34,42 @@ const EXE_PATH = join(OUT, 'binary.exe');
 writeFileSync(EXE_PATH, 'not really an exe');
 const PDF_PATH = join(import.meta.dirname, 'fixtures', 'sample.pdf');
 
+// 开屏视频夹具：仓库里已有则直接用，否则用浏览器 MediaRecorder 现场录一段 webm
+const SPLASH_PATH = join(import.meta.dirname, 'fixtures', 'splash.webm');
+async function ensureSplashFixture(p) {
+  if (existsSync(SPLASH_PATH) && statSync(SPLASH_PATH).size > 0) return;
+  const b64 = await p.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const canvas = document.createElement('canvas');
+        canvas.width = 160;
+        canvas.height = 90;
+        const c2d = canvas.getContext('2d');
+        let f = 0;
+        const timer = setInterval(() => {
+          f += 1;
+          c2d.fillStyle = `rgb(${(f * 25) % 255},60,120)`;
+          c2d.fillRect(0, 0, 160, 90);
+        }, 80);
+        const stream = canvas.captureStream(12);
+        const rec = new MediaRecorder(stream, { mimeType: 'video/webm' });
+        const chunks = [];
+        rec.ondataavailable = (e) => chunks.push(e.data);
+        rec.onerror = (e) => reject(new Error(String(e.error || 'MediaRecorder error')));
+        rec.onstop = () => {
+          clearInterval(timer);
+          const fr = new FileReader();
+          fr.onload = () => resolve(fr.result.split(',')[1]);
+          fr.onerror = reject;
+          fr.readAsDataURL(new Blob(chunks, { type: 'video/webm' }));
+        };
+        rec.start();
+        setTimeout(() => rec.stop(), 1500);
+      })
+  );
+  writeFileSync(SPLASH_PATH, Buffer.from(b64, 'base64'));
+}
+
 const consoleErrors = [];
 const pageErrors = [];
 
@@ -50,7 +86,9 @@ if (!health || health.version !== MOCK_VERSION) {
 }
 
 const browser = await chromium.launch({ channel: 'msedge', headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+// 显式创建 context（而非 browser.newPage 的隐式 context），后续才能 context.newPage() 复用同一份存储
+const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
+const page = await context.newPage();
 
 /** 直接读取本地状态，便于断言持久化结果（例如系统提示快照） */
 const readState = () => page.evaluate(() => JSON.parse(localStorage.getItem('ai-multi-chat-v1')));
@@ -840,6 +878,84 @@ try {
   check('写入失败时给出明确提示', (await page.locator('#toast').textContent()).includes('本地保存失败'));
   check('写入失败后回复仍可见', (await page.locator('.msg.assistant .prose').last().textContent()).length > 0);
   await page.evaluate(() => window.__restoreSetItem());
+
+  // ---------- 9d. 开屏动画（校验 / 保存 / 播放 / 不重播 / 跳过 / 移除） ----------
+  await ensureSplashFixture(page);
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-appearance');
+  check(
+    '外观面板含开屏动画区块',
+    (await page.locator('#panel-appearance .panel-title', { hasText: '开屏动画' }).count()) === 1
+  );
+
+  await page.setInputFiles('#splash-input', { name: 'not-video.txt', mimeType: 'text/plain', buffer: Buffer.from('hello') });
+  await page.waitForTimeout(150);
+  check('非视频文件被拒绝', (await page.locator('#toast').textContent()).includes('请选择视频文件'));
+
+  await page.setInputFiles('#splash-input', {
+    name: 'splash.webm',
+    mimeType: 'video/webm',
+    buffer: readFileSync(SPLASH_PATH),
+  });
+  await page.waitForFunction(() => document.querySelector('#splash-name').textContent === 'splash.webm');
+  const splashMeta = (await readState()).settings.splash;
+  check('开屏视频元数据落盘', !!splashMeta && splashMeta.name === 'splash.webm', JSON.stringify(splashMeta));
+  await page.screenshot({ path: join(OUT, '17-splash-setting.png') });
+  await page.click('#btn-close-settings');
+  await page.waitForFunction(() => document.querySelector('#settings-mask').classList.contains('hidden'));
+
+  // 进入页面播放一次，播完自动淡出进入界面
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  const splashShown = await page.locator('#splash-overlay').isVisible();
+  check('进入页面显示开屏动画', splashShown);
+  await page.screenshot({ path: join(OUT, '18-splash-playing.png') });
+  let splashFinished = false;
+  if (splashShown) {
+    try {
+      await page.locator('#splash-overlay').waitFor({ state: 'hidden', timeout: 9000 });
+      splashFinished = true;
+    } catch {
+      /* 超时即未淡出 */
+    }
+  }
+  check('播完自动淡出进入界面', splashFinished);
+
+  // 同一标签页刷新不重播
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  await page.waitForTimeout(200);
+  check('刷新不重播开屏动画', await page.locator('#splash-overlay').isHidden());
+
+  // 新的标签页会话（新 sessionStorage）会再播，跳过按钮立即进入
+  const splashPage = await page.context().newPage();
+  splashPage.on('pageerror', (e) => pageErrors.push(String(e)));
+  await splashPage.goto(APP, { waitUntil: 'domcontentloaded' });
+  const splashShownAgain = await splashPage.locator('#splash-overlay').isVisible();
+  check('再次进入重新播放', splashShownAgain);
+  let splashSkipped = false;
+  if (splashShownAgain) {
+    await splashPage.click('#btn-splash-skip');
+    try {
+      await splashPage.locator('#splash-overlay').waitFor({ state: 'hidden', timeout: 3000 });
+      splashSkipped = true;
+    } catch {
+      /* 超时即未跳过 */
+    }
+  }
+  check('跳过按钮立即进入界面', splashSkipped);
+  await splashPage.close();
+
+  // 移除后不再播放
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-appearance');
+  await page.click('#btn-splash-clear');
+  await page.waitForTimeout(200);
+  check('移除后回到未选择', (await page.locator('#splash-name').textContent()) === '未选择视频');
+  check('移除已落盘', (await readState()).settings.splash === null);
+  await page.click('#btn-close-settings');
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  check('移除后不再开屏', await page.locator('#splash-overlay').isHidden());
 
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));

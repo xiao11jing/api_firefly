@@ -27,6 +27,7 @@ import {
   normalizeBgOpacity,
 } from './background.js';
 import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
+import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
 import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
@@ -47,6 +48,7 @@ const hljs = window.hljs || null;
 
 /** @type {ReturnType<typeof store.defaultState>} */
 let state = store.loadState(window.localStorage);
+const splashStore = createSplashStore(window.indexedDB);
 let attachments = []; // 待发送附件：{ id, kind, name, size, dataUrl? | text? }
 let attachSeq = 0;
 let readingAttachments = 0; // 正在解析（PDF/文本读取）中的附件数
@@ -1708,6 +1710,16 @@ function renderBackgroundControls() {
     : '大图会自动等比压缩后再保存';
 }
 
+function renderSplashControls() {
+  const splash = (state.settings && state.settings.splash) || null;
+  $('#splash-name').textContent = splash ? splash.name : '未选择视频';
+  $('#splash-note').textContent = splash
+    ? `${formatBytes(splash.size)} · 仅保存在本地`
+    : '支持 mp4 / webm 等浏览器可播格式，建议 50MB 以内';
+  $('#btn-splash-clear').classList.toggle('hidden', !splash);
+  $('#splash-thumb').classList.toggle('active', !!splash);
+}
+
 /**
  * 超过最长边或体积上限时用画布等比缩放并重新编码为 JPEG，
  * 否则沿用原图（小图保留 PNG 透明通道）。背景图与头像共用。
@@ -1833,6 +1845,7 @@ function switchSettingsPanel(panel) {
 function openSettings(panel = 'appearance') {
   renderThemeOptions();
   renderBackgroundControls();
+  renderSplashControls();
   renderProfileForm();
   renderProviderList();
   renderTemplateList();
@@ -2154,6 +2167,41 @@ function bind() {
     renderBackgroundControls();
   });
 
+  // 开屏动画
+  $('#btn-splash-choose').addEventListener('click', () => $('#splash-input').click());
+  $('#splash-input').addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // 清空以便重复选择同一文件
+    if (!file) return;
+    const verdict = validateSplashFile(file);
+    if (!verdict.ok) {
+      const msg =
+        verdict.code === 'size'
+          ? `视频体积 ${formatBytes(verdict.size)}，超过 ${formatBytes(MAX_SPLASH_BYTES)} 上限`
+          : '请选择视频文件';
+      toast(msg, 'error');
+      return;
+    }
+    try {
+      await splashStore.save(file);
+    } catch (err) {
+      console.error('开屏视频保存失败', err);
+      toast('开屏视频保存失败（浏览器存储不可用）', 'error');
+      return;
+    }
+    store.setSplash(state, { name: file.name, size: file.size, savedAt: Date.now() });
+    persist();
+    renderSplashControls();
+    toast('开屏动画已更新');
+  });
+  $('#btn-splash-clear').addEventListener('click', async () => {
+    await splashStore.remove(); // 失败也继续清元数据，残留视频不会再被播放
+    store.setSplash(state, null);
+    persist();
+    renderSplashControls();
+    toast('已移除开屏动画');
+  });
+
   $('#btn-sidebar-settings').addEventListener('click', () => {
     closeSidebarOnMobile();
     openSettings('appearance');
@@ -2188,6 +2236,85 @@ function bind() {
   });
 }
 
+// ---------- 开屏动画播放 ----------
+
+let splashUrl = '';
+let splashDismissed = false;
+
+/** 淡出并卸载开屏层；可重复调用（ended/error/跳过可能并发触发） */
+function dismissSplash() {
+  const overlay = $('#splash-overlay');
+  if (!overlay || splashDismissed) return;
+  splashDismissed = true;
+  const video = $('#splash-video');
+  try {
+    video.pause();
+  } catch {
+    /* 尚未开始播放时 pause 可能抛错，忽略 */
+  }
+  overlay.classList.add('splash-fading');
+  let finished = false;
+  const finish = () => {
+    if (finished) return;
+    finished = true;
+    overlay.hidden = true;
+    overlay.classList.remove('splash-fading');
+    video.removeAttribute('src');
+    try {
+      video.load(); // 释放媒体资源
+    } catch {
+      /* ignore */
+    }
+    if (splashUrl) {
+      URL.revokeObjectURL(splashUrl);
+      splashUrl = '';
+    }
+  };
+  overlay.addEventListener('transitionend', finish, { once: true });
+  setTimeout(finish, 700); // 过渡事件在未完成绘制时不触发时的兜底
+}
+
+/**
+ * 内联脚本已判定本次进入需要开屏（overlay 可见）时，从 IndexedDB 取视频播放。
+ * 取不到 / 解码失败一律淡出进入界面，绝不把用户困在黑屏上。
+ */
+async function bootSplash() {
+  const overlay = $('#splash-overlay');
+  if (!overlay || overlay.hidden) return;
+  const video = $('#splash-video');
+  video.addEventListener('ended', dismissSplash);
+  video.addEventListener('error', dismissSplash);
+  $('#btn-splash-skip').addEventListener('click', (e) => {
+    e.stopPropagation(); // 不触发 overlay 的点击重播
+    dismissSplash();
+  });
+  let blob = null;
+  try {
+    blob = await splashStore.load();
+  } catch {
+    blob = null;
+  }
+  if (splashDismissed) return;
+  if (!blob) {
+    dismissSplash();
+    return;
+  }
+  splashUrl = URL.createObjectURL(blob);
+  video.src = splashUrl;
+  try {
+    await video.play();
+  } catch {
+    // 浏览器拒绝自动播放时点击画面任意处重试（静音视频通常不会走到这里）
+    overlay.addEventListener(
+      'click',
+      () => {
+        video.play().catch(() => {});
+      },
+      { once: true }
+    );
+  }
+}
+
 // ---------- 启动 ----------
 
 function init() {
@@ -2198,11 +2325,13 @@ function init() {
   renderAll();
   renderAttachments();
   renderThemeOptions();
+  renderSplashControls();
   renderCompareUI();
   renderBrand();
   autoGrow();
   // 放在绑定与渲染之后：写入失败也不能让整个界面失去响应
   persist();
+  bootSplash();
 }
 
 init();
