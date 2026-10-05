@@ -31,6 +31,7 @@ import {
   findPromptTemplate,
   setSessionSystemPrompt,
   systemPromptText,
+  setSessionLearnTopic,
 } from '../js/storage.js';
 
 function fakeStorage() {
@@ -554,4 +555,40 @@ test('groupMessages 把同一批次的回复合并为一组', () => {
   );
   assert.deepEqual(groupMessages(null), []);
   assert.deepEqual(groupMessages([]), []);
+});
+
+test('会话关联学习主题：设置、解绑与归一化', () => {
+  const state = defaultState();
+  const s = createSession(state);
+  assert.equal(s.learnTopicId, undefined);
+
+  assert.equal(setSessionLearnTopic(state, s.id, 't_abc'), 't_abc');
+  assert.equal(s.learnTopicId, 't_abc');
+
+  // 持久化往返后保留
+  const st = fakeStorage();
+  saveState(st, state);
+  const loaded = loadState(st);
+  const ls = loaded.sessions.find((x) => x.id === s.id);
+  assert.equal(ls.learnTopicId, 't_abc');
+
+  // 解绑（null/空串都清除）
+  setSessionLearnTopic(state, s.id, null);
+  assert.equal(s.learnTopicId, undefined);
+  setSessionLearnTopic(state, s.id, 't_x');
+  setSessionLearnTopic(state, s.id, '');
+  assert.equal(s.learnTopicId, undefined);
+
+  // 不存在的会话返回 null
+  assert.equal(setSessionLearnTopic(state, 'missing', 't_x'), null);
+});
+
+test('归一化丢弃非法的 learnTopicId', () => {
+  const state = defaultState();
+  state.sessions = [{ id: 's1', learnTopicId: 123 }, { id: 's2', learnTopicId: 'ok' }];
+  const st = fakeStorage();
+  st.setItem(STORAGE_KEY, JSON.stringify(state));
+  const loaded = loadState(st);
+  assert.equal(loaded.sessions[0].learnTopicId, null);
+  assert.equal(loaded.sessions[1].learnTopicId, 'ok');
 });

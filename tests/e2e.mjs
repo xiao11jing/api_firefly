@@ -414,7 +414,7 @@ try {
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#tab-prompt');
   check('左侧导航切到提示词面板', await page.locator('#panel-prompt').isVisible());
-  check('设置导航共五项且垂直排列', (await page.locator('.settings-nav-item').count()) === 5);
+  check('设置导航共六项且垂直排列', (await page.locator('.settings-nav-item').count()) === 6);
   check('模板列表初始为空', (await page.locator('#template-list .provider-item').count()) === 0);
   const navBox = await page.locator('.settings-nav').boundingBox();
   const panelBox = await page.locator('.settings-panels').boundingBox();
@@ -1113,6 +1113,126 @@ try {
   await page.waitForTimeout(250);
   check('关闭后桌宠隐藏', await page.evaluate(() => document.querySelector('#pet').hidden));
   check('关闭已落盘', (await readState()).settings.pet.visible === false);
+
+  // ---------- 9b. Learn 模式：建主题 → 关联会话 → 访谈上下文 → 生成计划 → 推进条目 ----------
+  // 上一节可能停在设置弹窗内，先确保干净的开合路径
+  if (await page.locator('#settings-mask:not(.hidden)').count()) {
+    await page.click('#btn-close-settings');
+    await page.waitForTimeout(150);
+  }
+  // 新建计划驱动主题（状态留空 → AI 开场应先访谈）
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-learn');
+  check('设置出现学习面板', await page.locator('#panel-learn').isVisible());
+  check('计划区在未选主题时隐藏', await page.locator('#learn-plan-box').isHidden());
+  await page.fill('#lf-name', 'Transformer 学习');
+  await page.selectOption('#lf-mode', 'plan');
+  await page.click('#learn-form button[type="submit"]');
+  await page.waitForTimeout(200);
+  check(
+    '主题列表出现新建主题',
+    (await page.locator('#learn-topic-list .provider-item').count()) >= 1 &&
+      (await page.locator('#learn-topic-list .provider-item.active').textContent()).includes('Transformer 学习')
+  );
+  check('保存后进入编辑态（删除按钮可见）', await page.locator('#btn-del-topic').isVisible());
+  check('计划区显示空计划提示', await page.locator('#learn-plan-box').isVisible());
+  check('空计划提示文案', (await page.locator('#learn-plan-sub').textContent()).includes('暂无条目'));
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(200);
+
+  // 新会话并关联学习主题
+  await page.click('#btn-new-chat');
+  await page.waitForTimeout(150);
+  await page.click('#btn-pill-learn');
+  await page.locator('#learn-menu:not(.hidden)').waitFor();
+  check('学习菜单列出主题', (await page.locator('#learn-menu .menu-item').count()) === 2); // 不关联 + 主题
+  await page.locator('#learn-menu .menu-item').nth(1).click();
+  await page.waitForTimeout(200);
+  const learnLink = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ai-multi-chat-v1'));
+    const ses = s.sessions.find((x) => x.id === s.activeSessionId);
+    return (ses && ses.learnTopicId) || null;
+  });
+  check('会话已关联学习主题', !!learnLink, String(learnLink));
+  const learnPersisted = await page.evaluate(() =>
+    JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'))
+  );
+  check('活动主题已落盘', learnPersisted && learnPersisted.activeTopicId === learnLink);
+  check(
+    '学习按钮出现关联标记',
+    !(await page.locator('#learn-flag').evaluate((el) => el.classList.contains('hidden')))
+  );
+
+  // 发送首条消息：system 应带上 Learn 分层提示词与访谈指示
+  await page.fill('#input', '我们开始吧');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.msg.assistant .prose')].some((el) => el.textContent.includes('模拟回复')),
+    { timeout: 15000 }
+  );
+  const learnReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const learnSys = (learnReq.messages || []).find((m) => m.role === 'system');
+  check('Learn 分层提示词已注入 system', !!learnSys && learnSys.content.includes('Learn 模式常驻规则'), learnSys ? String(learnSys.content.length) : 'no system');
+  check('system 含教学人格与计划模式', learnSys.content.includes('教学人格') && learnSys.content.includes('模式一：计划驱动'));
+  check('缺状态时给出开场访谈三问', learnSys.content.includes('开场访谈') && learnSys.content.includes('你目前学到哪一步了？'));
+  check('访谈带跳过出口', learnSys.content.includes('先按默认走，边聊边校准'));
+  check('上下文带主题名且标注未生成计划', learnSys.content.includes('Transformer 学习') && learnSys.content.includes('尚未生成计划'));
+
+  // 请求生成计划 → mock 返回 ```plan 块 → 前端解析入库（AI 计划整体重建条目）
+  await page.fill('#input', '请根据我的状态生成计划');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => {
+      const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+      const t = (ls.topics || []).find((x) => x.id === ls.activeTopicId);
+      return !!t && t.plan.items.length === 3;
+    },
+    { timeout: 15000 }
+  );
+  const planState = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    return ls.topics.find((x) => x.id === ls.activeTopicId);
+  });
+  check(
+    'AI 计划块解析为 3 条目',
+    planState.plan.items.length === 3 && planState.plan.items.every((i) => i.status === 'todo') && planState.plan.items.some((i) => i.title === '手写一遍 QKV 计算'),
+    planState.plan.items.map((i) => i.title).join(' | ')
+  );
+
+  // 设置页：查看计划 → 手动追加条目 → 推进第一格
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-learn');
+  await page.waitForTimeout(150);
+  check('计划区显示 AI 生成的 3 条', (await page.locator('#learn-plan-list .plan-row').count()) === 3);
+  await page.fill('#lf-item', '整理本次笔记');
+  await page.click('#btn-lf-add-item');
+  await page.waitForTimeout(150);
+  check(
+    '手动添加为追加而非重建（共 4 条且 AI 条目仍在）',
+    (await page.locator('#learn-plan-list .plan-row').count()) === 4 &&
+      (await page.locator('#learn-plan-list .plan-row-title').first().textContent()).includes('理解 Self-Attention')
+  );
+  check('新条目状态为未开始', (await page.locator('.plan-badge').last().textContent()) === '未开始');
+  await page.screenshot({ path: join(OUT, '23-learn-settings.png') });
+  const firstRow = page.locator('#learn-plan-list .plan-row').first();
+  check('首条状态为未开始', (await firstRow.locator('.plan-badge').textContent()) === '未开始');
+  await firstRow.locator('.plan-act').click();
+  await page.waitForTimeout(150);
+  check('点击开始后变为进行中', (await firstRow.locator('.plan-badge').textContent()) === '进行中');
+  await firstRow.locator('.plan-act').click();
+  await page.waitForTimeout(150);
+  check('点击完成后变为已完成', (await firstRow.locator('.plan-badge').textContent()) === '已完成');
+  const advanced = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const t = ls.topics.find((x) => x.id === ls.activeTopicId);
+    return t.plan.items[0];
+  });
+  check('状态流转已落盘', advanced.status === 'done', JSON.stringify(advanced));
+  await page.screenshot({ path: join(OUT, '24-learn-plan.png') });
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(200);
 
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));

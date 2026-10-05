@@ -254,13 +254,16 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 3. 测试：`tests/learn-store.test.mjs`（读写/迁移/配额兜底/导出结构）、`tests/learn-quiz.test.mjs`（窗口、分母、推翻、resolved 流转）
    **验收**：189 项旧测试 + 新测试全绿
 
-### Phase 2 — 主题、计划与双模式提示词
+### Phase 2 — 主题、计划与双模式提示词 ✅ 已完成
 
-1. `learn-prompts.js`：四份内置提示词装配，接入现有系统提示词模板机制
-2. `learn.js`：主题 CRUD、模式一访谈流程（3 问 + 跳过出口）、计划生成/推进/更新触发
-3. UI：输入区学习入口、设置「学习」页
-4. 测试：`tests/learn-prompts.test.mjs`（装配顺序、模式差异、出口文案存在）、`tests/learn.test.mjs`（访谈上限 3 问、计划状态流转、更新触发条件）
-   **验收**：单测全绿；mock 服务下走通「建主题→访谈→出计划→推进一条目」
+> 交付：`js/learn/learn-prompts.js`（四层装配：常驻规则 → 人格 → 模式 → 动态上下文 → 用户模板，
+> 在 `buildApiMessages` 注入）、`js/learn/learn.js`（访谈三问 + 跳过出口、计划解析 `parsePlanItems`、
+> 状态流转与 `advancePlan` + 推进语检测）、会话 `learnTopicId` 关联（storage.js）、
+> 输入区学习胶囊菜单、设置「学习」页（主题 CRUD + 计划条目状态推进 + 手动加条目）。
+> 测试：`tests/learn.test.mjs`、`tests/learn-prompts.test.mjs`、storage 关联用例；
+> mock 升级 v3（识别「生成计划」返回 ```plan 块）；E2E 新增 9b 场景，**248/248 通过**。
+> 教训：`persistLearn` 不能整体替换 `learnState` —— UI 闭包持有的主题对象会被孤立，
+> 点击改到旧副本上写入落空；必须与主应用 `persist()` 一样就地持久化。
 
 ### Phase 3 — 进度面板
 

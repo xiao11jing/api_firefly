@@ -159,6 +159,7 @@ export function normalizeTopic(raw) {
     priorStage: String(raw.priorStage == null ? '' : raw.priorStage),
     createdAt: numOr(raw.createdAt, Date.now()),
     updatedAt: numOr(raw.updatedAt, Date.now()),
+    interviewedAt: numOr(raw.interviewedAt, 0) || null,
     plan: {
       updatedAt: numOr(planRaw.updatedAt, numOr(raw.updatedAt, Date.now())),
       items: (Array.isArray(planRaw.items) ? planRaw.items : [])

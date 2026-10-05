@@ -232,6 +232,17 @@ export function systemPromptText(session) {
   return (session && session.systemPrompt && session.systemPrompt.text) || '';
 }
 
+/** 关联/解绑会话的学习主题；topicId 为 null 表示解绑 */
+export function setSessionLearnTopic(state, sessionId, topicId) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s) return null;
+  const id = typeof topicId === 'string' && topicId ? topicId : null;
+  if (id) s.learnTopicId = id;
+  else delete s.learnTopicId;
+  s.updatedAt = Date.now();
+  return s.learnTopicId;
+}
+
 function normalizeState(s) {
   const base = defaultState();
   if (!s || typeof s !== 'object') return base;
@@ -351,6 +362,8 @@ function normalizeSession(s) {
     title: typeof s.title === 'string' && s.title ? s.title : '新会话',
     model: s.model && typeof s.model === 'object' ? s.model : null,
     systemPrompt: normalizeSystemPrompt(s.systemPrompt),
+    learnTopicId:
+      typeof s.learnTopicId === 'string' && s.learnTopicId ? s.learnTopicId : null,
     messages: Array.isArray(s.messages) ? s.messages.map(normalizeMessage).filter(Boolean) : [],
     createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
     updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),

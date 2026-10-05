@@ -8,7 +8,7 @@
 import http from 'node:http';
 
 /** 改动 mock 行为时递增，E2E 会据此提示「需要重启 mock 服务」 */
-export const MOCK_VERSION = '2';
+export const MOCK_VERSION = '3';
 
 const PORT = Number(process.env.MOCK_PORT || 8717);
 
@@ -36,6 +36,26 @@ const MOCK_USAGE = { prompt_tokens: 42, completion_tokens: 108, total_tokens: 15
 /** 模型名含 nousage 时故意不回传 usage，用于验证前端的估算兜底 */
 function sendsUsage(model) {
   return !/nousage/i.test(String(model || ''));
+}
+
+/** 用户消息要求生成计划时，回复一个 ```plan 块，供前端解析（Learn 模式） */
+const PLAN_CUE = /(?:生成|制定|做一份|来一?个|出一?份).{0,6}计划|学习计划/;
+function planSample() {
+  return [
+    '好的，根据你的状态我整理了这份计划：\n\n',
+    '```plan\n',
+    '[{"title": "理解 Self-Attention 的动机", "note": "先看直觉图"}, {"title": "手写一遍 QKV 计算", "note": ""}, {"title": "做 3 道注意力机制练习", "note": ""}]\n',
+    '```\n\n',
+    '先从第一条开始，有不清楚的随时打断我。',
+  ];
+}
+
+function replyFor(parsed) {
+  const wantsPlan = (parsed.messages || []).some(
+    (m) => m.role === 'user' && typeof m.content === 'string' && PLAN_CUE.test(m.content)
+  );
+  if (wantsPlan) return planSample();
+  return sampleFor(parsed.model);
 }
 
 function sseEvent(delta, finish = null) {
@@ -105,7 +125,7 @@ export function createMockServer() {
     }
 
     if (parsed.stream) {
-      const sample = sampleFor(parsed.model);
+      const sample = replyFor(parsed);
       res.writeHead(200, {
         ...CORS,
         'Content-Type': 'text/event-stream; charset=utf-8',
@@ -126,7 +146,7 @@ export function createMockServer() {
       return;
     }
 
-    const text = sampleFor(parsed.model).join('');
+    const text = replyFor(parsed).join('');
     res.writeHead(200, { ...CORS, 'Content-Type': 'application/json' });
     res.end(
       JSON.stringify({
