@@ -30,7 +30,7 @@ import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './prof
 import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
 import { initTooltips } from './tooltip.js';
 import { hidePet, initPet, normalizePet, petApplyScale, petApplyTopmost, showPet } from './pet.js';
-import { exportFilename, sessionToMarkdown } from './export.js';
+import { exportFilename, formatDateTime, safeFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
   computeCost,
@@ -46,6 +46,7 @@ import {
 } from './usage.js';
 import { createLearnStore, createTopic } from './learn/learn-store.js';
 import { assembleLearnSystem } from './learn/learn-prompts.js';
+import { buildPanelModel } from './learn/learn-panel.js';
 import {
   advancePlan,
   applyProfile,
@@ -731,6 +732,7 @@ function renderSessionTools(session) {
   $('#btn-export').disabled = !hasMessages;
   renderPromptFlag();
   renderLearnFlag();
+  renderModeSeg();
 }
 
 /** 同一批对比回复左右分栏展示 */
@@ -810,9 +812,15 @@ async function send() {
   renderMessages();
   $('#topbar-title').textContent = session.title;
 
-  // 计划驱动主题：用户说出推进语（下一步/继续推进等）时，计划自动推进一格
+  // Learn 模式：用户说出推进语（下一步/继续推进等）时，计划自动推进一格
   const learnTopic = sessionTopic(session);
-  if (learnTopic && learnTopic.mode === 'plan' && learnTopic.plan.items.length && detectAdvanceCue(text)) {
+  if (
+    learnTopic &&
+    session.uiMode === 'learn' &&
+    learnTopic.mode === 'plan' &&
+    learnTopic.plan.items.length &&
+    detectAdvanceCue(text)
+  ) {
     const moved = advancePlan(learnTopic, Date.now());
     if (moved) {
       await persistLearn();
@@ -852,8 +860,10 @@ function buildApiMessages(session, target, comparing) {
     .map((m) => ({ role: m.role, content: m.content }));
 
   const systemPrompt = store.systemPromptText(session);
-  // 会话关联学习主题时，注入 Learn 分层提示词（常驻规则 → 人格 → 模式 → 上下文 → 用户模板）
-  const systemContent = assembleLearnSystem({ topic: sessionTopic(session), userText: systemPrompt });
+  // 仅 Learn 模式（顶栏切到 Learn 且有关联主题）才注入 Learn 分层提示词
+  const learnTopic = sessionTopic(session);
+  const learnOn = learnTopic && session.uiMode === 'learn';
+  const systemContent = assembleLearnSystem({ topic: learnOn ? learnTopic : null, userText: systemPrompt });
   return systemContent ? [{ role: 'system', content: systemContent }, ...history] : history;
 }
 
@@ -947,10 +957,10 @@ async function runBranch({ session, spec, controller, started }) {
       }),
       ...(snapshot ? { systemPrompt: { name: snapshot.name, text: snapshot.text } } : {}),
     });
-    // 单模型回复里出现 ```plan 块 → 解析为当前会话学习主题的计划
+    // 单模型回复里出现 ```plan 块 → 解析为当前会话学习主题的计划（仅 Learn 模式）
     if (!spec.message.batchId) {
       const topic = sessionTopic(s);
-      if (topic) applyPlanFromReply(topic, full);
+      if (topic && s.uiMode === 'learn') applyPlanFromReply(topic, full);
     }
   }
   persist();
@@ -1072,15 +1082,31 @@ async function persistLearn() {
   } catch (e) {
     toast(`学习数据保存失败：${(e && e.message) || e}`, 'error');
   }
+  if (learnDrawerOpen()) renderLearnDrawer();
 }
 
 function renderLearnFlag() {
-  const topic = sessionTopic(store.getActiveSession(state));
+  const session = store.getActiveSession(state);
+  const topic = sessionTopic(session);
+  const on = !!topic && session.uiMode === 'learn';
   const btn = $('#btn-pill-learn');
-  $('#learn-flag').classList.toggle('hidden', !topic);
-  btn.classList.toggle('has-value', !!topic);
-  btn.dataset.tip = topic ? `学习主题：${topic.name}` : '学习主题（本会话）';
+  $('#learn-flag').classList.toggle('hidden', !on);
+  btn.classList.toggle('has-value', on);
+  btn.dataset.tip = on
+    ? `学习主题：${topic.name}`
+    : topic
+      ? `学习主题：${topic.name}（Chat 模式下暂停）`
+      : '学习主题（本会话）';
   btn.setAttribute('aria-label', btn.dataset.tip);
+}
+
+/** 顶栏 Chat / Learn 分段高亮 */
+function renderModeSeg() {
+  const session = store.getActiveSession(state);
+  const mode = (session && session.uiMode) || 'chat';
+  for (const btn of document.querySelectorAll('.app-mode')) {
+    btn.setAttribute('aria-selected', String(btn.dataset.mode === mode));
+  }
 }
 
 function closeLearnMenu() {
@@ -1183,6 +1209,7 @@ function linkLearnTopic(topicId) {
   persist();
   persistLearn();
   renderLearnFlag();
+  renderModeSeg();
   renderLearnMenu();
   closeLearnMenu();
   const topic = topicById(topicId);
@@ -1323,6 +1350,8 @@ async function deleteLearnTopic() {
   await persistLearn();
   resetLearnForm();
   renderLearnFlag();
+  renderModeSeg();
+  closeLearnDrawer();
   toast('主题已删除');
 }
 
@@ -1400,6 +1429,217 @@ function addLearnItem() {
 function renderLearnSettings() {
   renderLearnTopicList();
   renderLearnPlanList();
+}
+
+// ---------- Learn：顶栏模式切换与进度抽屉 ----------
+
+function learnDrawerOpen() {
+  return !$('#learn-drawer').classList.contains('hidden');
+}
+
+function closeLearnDrawer() {
+  $('#learn-drawer').classList.add('hidden');
+  document.documentElement.classList.remove('has-learn-drawer');
+}
+
+function openLearnDrawer() {
+  renderLearnDrawer();
+  $('#learn-drawer').classList.remove('hidden');
+  document.documentElement.classList.add('has-learn-drawer');
+}
+
+/** 顶栏 Chat / Learn 切换。Learn 需要已关联主题，否则引导去设置创建 */
+function switchUiMode(mode) {
+  const session = store.getActiveSession(state);
+  if (!session) return;
+  if (mode === 'learn') {
+    if (!session.learnTopicId) {
+      toast('请先创建或选择学习主题', 'error');
+      openSettings('learn');
+      return;
+    }
+    // 已在 Learn 且面板开着 → 收起；否则进入 Learn 并打开进度面板
+    if (session.uiMode === 'learn' && learnDrawerOpen()) {
+      closeLearnDrawer();
+      return;
+    }
+    if (session.uiMode !== 'learn') {
+      store.setSessionUiMode(state, session.id, 'learn');
+      persist();
+      renderModeSeg();
+      renderLearnFlag();
+    }
+    openLearnDrawer();
+  } else {
+    if (session.uiMode !== 'chat') {
+      store.setSessionUiMode(state, session.id, 'chat');
+      persist();
+      renderModeSeg();
+      renderLearnFlag();
+    }
+    closeLearnDrawer();
+  }
+}
+
+function ldSection(title) {
+  const sec = document.createElement('section');
+  sec.className = 'ld-section';
+  const h = document.createElement('h4');
+  h.className = 'ld-section-title';
+  h.textContent = title;
+  sec.appendChild(h);
+  return sec;
+}
+
+function ldP(cls, text) {
+  const el = document.createElement('p');
+  el.className = cls;
+  el.textContent = text;
+  return el;
+}
+
+function renderDrawerPlanRow(topic, item) {
+  const row = document.createElement('div');
+  row.className = 'plan-row';
+  row.dataset.status = item.status;
+
+  const main = document.createElement('span');
+  main.className = 'plan-row-main';
+  const title = document.createElement('span');
+  title.className = 'plan-row-title';
+  title.textContent = item.title;
+  main.appendChild(title);
+  if (item.note) {
+    const note = document.createElement('span');
+    note.className = 'plan-row-note';
+    note.textContent = item.note;
+    main.appendChild(note);
+  }
+
+  const badge = document.createElement('span');
+  badge.className = 'plan-badge';
+  badge.dataset.status = item.status;
+  badge.textContent = PLAN_STATUS_LABEL[item.status] || item.status;
+
+  const act = document.createElement('button');
+  act.type = 'button';
+  act.className = 'plan-act';
+  act.textContent = PLAN_ACT_LABEL[item.status] || '推进';
+  act.addEventListener('click', () => {
+    markItemStatus(topic, item.id, PLAN_STATUS_NEXT[item.status], Date.now());
+    persistLearn(); // persistLearn 内会同步刷新已打开的面板
+    renderLearnPlanList();
+    renderLearnTopicList();
+  });
+
+  row.append(main, badge, act);
+  return row;
+}
+
+/** 渲染进度抽屉（面板只展示可验证结构，不显示掌握度百分比） */
+function renderLearnDrawer() {
+  const body = $('#learn-drawer-body');
+  const session = store.getActiveSession(state);
+  const topic = sessionTopic(session);
+  const model = buildPanelModel(topic);
+  body.innerHTML = '';
+
+  if (model.empty) {
+    $('#learn-drawer-title').textContent = model.title;
+    body.appendChild(ldP('ld-empty', model.emptyHint));
+    $('#btn-learn-export').disabled = true;
+    return;
+  }
+  $('#learn-drawer-title').textContent = '学习进度';
+  $('#btn-learn-export').disabled = false;
+
+  const meta = document.createElement('div');
+  meta.className = 'ld-meta';
+  const name = document.createElement('span');
+  name.textContent = model.name;
+  const tag = document.createElement('span');
+  tag.className = 'ld-mode-tag';
+  tag.textContent = model.modeLabel;
+  meta.append(name, tag);
+  body.appendChild(meta);
+
+  if (model.interviewPending) {
+    body.appendChild(
+      ldP('ld-hint', '尚未记录当前状态：AI 会在开场先问你三个问题，也可以在设置 → 学习里直接填写跳过。')
+    );
+  }
+
+  // 计划状态
+  const planSec = ldSection('计划状态');
+  if (!model.plan.total) {
+    planSec.appendChild(
+      ldP(
+        'ld-none',
+        model.modeLabel === '陪伴'
+          ? '陪伴模式无计划；需要时可在对话中让 AI 整理成计划。'
+          : '暂无计划条目：在对话中让 AI 生成，或在设置 → 学习里手动添加。'
+      )
+    );
+  } else {
+    planSec.appendChild(
+      ldP('ld-summary', `已完成 ${model.plan.done} / 共 ${model.plan.total} 条（${model.plan.percent}%）`)
+    );
+    const bar = document.createElement('div');
+    bar.className = 'ld-progress';
+    const fill = document.createElement('i');
+    fill.style.width = `${model.plan.percent}%`;
+    bar.appendChild(fill);
+    planSec.appendChild(bar);
+    for (const item of model.plan.items) planSec.appendChild(renderDrawerPlanRow(topic, item));
+  }
+  body.appendChild(planSec);
+
+  // 练习正确率
+  const accSec = ldSection('练习正确率');
+  if (model.accuracy.considered) {
+    accSec.appendChild(ldP('ld-acc-value', `${model.accuracy.percent}%`));
+    let note = `近 ${model.accuracy.window} 条作答中判对 ${model.accuracy.right} · 判错 ${model.accuracy.wrong}（AI 判定）`;
+    if (model.accuracy.excluded) note += ` · 另有 ${model.accuracy.excluded} 条未计入`;
+    accSec.appendChild(ldP('ld-acc-note', note));
+  } else {
+    accSec.appendChild(ldP('ld-acc-value none', '暂无作答记录'));
+    accSec.appendChild(ldP('ld-acc-note', '对话中的练习会按近 10 条窗口统计（AI 判定口径）。'));
+  }
+  body.appendChild(accSec);
+
+  // 待解决问题
+  const qSec = ldSection(`待解决问题（${model.questions.length}）`);
+  if (!model.questions.length) {
+    qSec.appendChild(ldP('ld-none', '暂无'));
+  } else {
+    for (const q of model.questions) qSec.appendChild(ldP('ld-q', q.text));
+  }
+  body.appendChild(qSec);
+}
+
+/** 导出学习工作区：多文件按路径分节合并为一个 Markdown 下载 */
+async function exportLearnWorkspace() {
+  const session = store.getActiveSession(state);
+  const topic = sessionTopic(session);
+  if (!topic) {
+    toast('当前会话未关联学习主题', 'error');
+    return;
+  }
+  try {
+    const files = await learnStore.exportVault(topic.id);
+    const parts = [
+      `# 学习工作区 — ${topic.name}`,
+      '',
+      `- 导出时间：${formatDateTime(new Date())}`,
+      '- 以下按虚拟目录路径分节，对应 Obsidian Vault 的目录结构。',
+      '',
+    ];
+    for (const f of files) parts.push(`## ${f.path}`, '', f.content.trim(), '');
+    downloadText(`${safeFilename(topic.name)}-学习工作区.md`, `${parts.join('\n').trimEnd()}\n`);
+    toast('已导出学习工作区');
+  } catch (e) {
+    toast(`导出失败：${(e && e.message) || e}`, 'error');
+  }
 }
 
 // ---------- 系统提示（提示词模板） ----------
@@ -2501,6 +2741,14 @@ function bind() {
     e.stopPropagation();
     toggleLearnMenu();
   });
+  $('#mode-chat').addEventListener('click', () => switchUiMode('chat'));
+  $('#mode-learn').addEventListener('click', () => switchUiMode('learn'));
+  $('#btn-close-drawer').addEventListener('click', closeLearnDrawer);
+  $('#btn-learn-export').addEventListener('click', exportLearnWorkspace);
+  $('#btn-learn-manage').addEventListener('click', () => {
+    closeLearnDrawer();
+    openSettings('learn');
+  });
   $('#btn-add-template').addEventListener('click', resetTemplateForm);
   $('#template-form').addEventListener('submit', saveTemplateForm);
   $('#btn-del-template').addEventListener('click', deleteTemplateForm);
@@ -2566,6 +2814,10 @@ function bind() {
     }
     if (!$('#model-menu').classList.contains('hidden')) {
       closeModelMenu();
+      return;
+    }
+    if (!$('#learn-drawer').classList.contains('hidden')) {
+      closeLearnDrawer();
       return;
     }
     if (!$('#settings-mask').classList.contains('hidden')) {

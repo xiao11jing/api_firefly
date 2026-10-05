@@ -232,15 +232,34 @@ export function systemPromptText(session) {
   return (session && session.systemPrompt && session.systemPrompt.text) || '';
 }
 
-/** 关联/解绑会话的学习主题；topicId 为 null 表示解绑 */
+/** 关联/解绑会话的学习主题；topicId 为 null 表示解绑。关联即进入 Learn 模式，解绑回落 Chat */
 export function setSessionLearnTopic(state, sessionId, topicId) {
   const s = state.sessions.find((x) => x.id === sessionId);
   if (!s) return null;
   const id = typeof topicId === 'string' && topicId ? topicId : null;
-  if (id) s.learnTopicId = id;
-  else delete s.learnTopicId;
+  if (id) {
+    s.learnTopicId = id;
+    s.uiMode = 'learn';
+  } else {
+    delete s.learnTopicId;
+    s.uiMode = 'chat';
+  }
   s.updatedAt = Date.now();
   return s.learnTopicId;
+}
+
+/**
+ * 切换会话的顶栏模式（chat / learn）。
+ * Learn 必须已关联主题，否则保持原模式；返回生效后的模式。
+ */
+export function setSessionUiMode(state, sessionId, mode) {
+  const s = state.sessions.find((x) => x.id === sessionId);
+  if (!s) return null;
+  if (mode !== 'chat' && mode !== 'learn') return s.uiMode || 'chat';
+  if (mode === 'learn' && !s.learnTopicId) return s.uiMode || 'chat';
+  s.uiMode = mode;
+  s.updatedAt = Date.now();
+  return s.uiMode;
 }
 
 function normalizeState(s) {
@@ -357,13 +376,22 @@ function normalizeMessage(m) {
 
 function normalizeSession(s) {
   if (!s || typeof s !== 'object' || typeof s.id !== 'string') return null;
+  const learnTopicId =
+    typeof s.learnTopicId === 'string' && s.learnTopicId ? s.learnTopicId : null;
+  // uiMode：显式值优先；历史数据无此字段时，有关联主题即视为 Learn
+  const uiMode =
+    s.uiMode === 'chat' || s.uiMode === 'learn'
+      ? s.uiMode
+      : learnTopicId
+        ? 'learn'
+        : 'chat';
   return {
     id: s.id,
     title: typeof s.title === 'string' && s.title ? s.title : '新会话',
     model: s.model && typeof s.model === 'object' ? s.model : null,
     systemPrompt: normalizeSystemPrompt(s.systemPrompt),
-    learnTopicId:
-      typeof s.learnTopicId === 'string' && s.learnTopicId ? s.learnTopicId : null,
+    learnTopicId,
+    uiMode: learnTopicId || uiMode === 'chat' ? uiMode : 'chat', // Learn 无主题时回退 chat
     messages: Array.isArray(s.messages) ? s.messages.map(normalizeMessage).filter(Boolean) : [],
     createdAt: typeof s.createdAt === 'number' ? s.createdAt : Date.now(),
     updatedAt: typeof s.updatedAt === 'number' ? s.updatedAt : Date.now(),
@@ -385,6 +413,7 @@ export function createSession(state, model = null) {
     id: uid(),
     title: '新会话',
     model,
+    uiMode: 'chat',
     messages: [],
     createdAt: now,
     updatedAt: now,

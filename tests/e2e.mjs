@@ -1234,6 +1234,80 @@ try {
   await page.click('#btn-close-settings');
   await page.waitForTimeout(200);
 
+  // ---------- 9c. 顶栏 Chat/Learn 切换与进度抽屉 ----------
+  check('顶栏 Learn 段已高亮', (await page.getAttribute('#mode-learn', 'aria-selected')) === 'true');
+  check('顶栏 Chat 段未高亮', (await page.getAttribute('#mode-chat', 'aria-selected')) === 'false');
+
+  await page.click('#mode-learn'); // 已在 Learn → 打开进度抽屉
+  await page.locator('#learn-drawer:not(.hidden)').waitFor();
+  check('进度抽屉打开', await page.locator('#learn-drawer').isVisible());
+  check('抽屉显示主题名与模式', (await page.locator('.ld-meta').textContent()).includes('Transformer 学习'));
+  const planSummary = await page.locator('.ld-summary').textContent();
+  check('抽屉显示完成度 1/4', planSummary.includes('已完成 1 / 共 4 条'), planSummary);
+  check('正确率显示暂无作答', (await page.locator('.ld-acc-value').textContent()).includes('暂无'));
+  check(
+    '待解决问题计数为 0',
+    (await page.locator('.ld-section-title').nth(2).textContent()) === '待解决问题（0）'
+  );
+  check('抽屉内计划条目 4 行', (await page.locator('#learn-drawer-body .plan-row').count()) === 4);
+  // 抽屉打开时输入区不被遮挡（.main 右移让位；等 0.2s 过渡完成再测量）
+  await page.waitForTimeout(350);
+  const segSendBox = await page.locator('#btn-send').boundingBox();
+  const drawerBox = await page.locator('#learn-drawer').boundingBox();
+  check('发送按钮不被抽屉遮挡', segSendBox.x + segSendBox.width <= drawerBox.x + 1, `send右=${segSendBox.x + segSendBox.width} 抽屉左=${drawerBox.x}`);
+  await page.screenshot({ path: join(OUT, '25-learn-drawer.png') });
+
+  // 抽屉内推进第二条：未开始 → 进行中
+  const dRow = page.locator('#learn-drawer-body .plan-row').nth(1);
+  await dRow.locator('.plan-act').click();
+  await page.waitForTimeout(300);
+  check('抽屉内点击开始后变为进行中', (await dRow.locator('.plan-badge').textContent()) === '进行中');
+
+  // 导出学习工作区
+  const dlPromise = page.waitForEvent('download');
+  await page.click('#btn-learn-export');
+  const dl = await dlPromise;
+  check('导出文件名', dl.suggestedFilename() === 'Transformer 学习-学习工作区.md', dl.suggestedFilename());
+  const dlText = readFileSync(await dl.path(), 'utf8');
+  check(
+    '导出按虚拟目录分节',
+    dlText.includes('## learn/plan.md') && dlText.includes('## learn/progress.md') && dlText.includes('## exercises/quiz-log.md')
+  );
+  check('导出含计划条目与进度', dlText.includes('理解 Self-Attention 的动机') && dlText.includes('学习进度'));
+
+  await page.keyboard.press('Escape');
+  check('Esc 关闭抽屉', await page.locator('#learn-drawer').isHidden());
+
+  // 切到 Chat：暂停 Learn 注入
+  await page.click('#mode-chat');
+  await page.waitForTimeout(150);
+  check('Chat 段高亮', (await page.getAttribute('#mode-chat', 'aria-selected')) === 'true');
+  check('Chat 段下学习标记隐藏', await page.locator('#learn-flag').evaluate((el) => el.classList.contains('hidden')));
+  await page.fill('#input', '这是普通聊天');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.msg.assistant .prose')].some((el) => el.textContent.includes('模拟回复')),
+    { timeout: 15000 }
+  );
+  const chatReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const chatSys = (chatReq.messages || []).find((m) => m.role === 'system');
+  check('Chat 模式不注入 Learn 提示词', !chatSys || !chatSys.content.includes('Learn 模式常驻规则'));
+
+  // 切回 Learn：恢复注入并重新打开面板
+  await page.click('#mode-learn');
+  await page.locator('#learn-drawer:not(.hidden)').waitFor();
+  check('切回 Learn 后抽屉重开', await page.locator('#learn-drawer').isVisible());
+  check('切回 Learn 后标记恢复', !(await page.locator('#learn-flag').evaluate((el) => el.classList.contains('hidden'))));
+  await page.fill('#input', '继续学习');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.msg.assistant .prose')].some((el) => el.textContent.includes('模拟回复')),
+    { timeout: 15000 }
+  );
+  const backReq = await fetch(`${MOCK}/last-request`).then((r) => r.json());
+  const backSys = (backReq.messages || []).find((m) => m.role === 'system');
+  check('切回 Learn 后恢复注入', !!backSys && backSys.content.includes('Learn 模式常驻规则'));
+
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
   const realConsoleErrors = consoleErrors.filter(
