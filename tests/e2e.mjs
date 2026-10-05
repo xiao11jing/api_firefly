@@ -414,7 +414,7 @@ try {
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#tab-prompt');
   check('左侧导航切到提示词面板', await page.locator('#panel-prompt').isVisible());
-  check('设置导航共四项且垂直排列', (await page.locator('.settings-nav-item').count()) === 4);
+  check('设置导航共五项且垂直排列', (await page.locator('.settings-nav-item').count()) === 5);
   check('模板列表初始为空', (await page.locator('#template-list .provider-item').count()) === 0);
   const navBox = await page.locator('.settings-nav').boundingBox();
   const panelBox = await page.locator('.settings-panels').boundingBox();
@@ -1004,6 +1004,115 @@ try {
   check('恢复默认字号', (await page.evaluate(() => document.documentElement.style.zoom)) === '');
   check('恢复默认已落盘', (await readState()).settings.fontScale === 1);
   await page.click('#btn-close-settings');
+
+  // ---------- 9f. 桌宠（面板 / 加载 / 缩放 / 置顶 / 拖动 / 持久化） ----------
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  check('设置含桌宠分类', (await page.locator('#tab-pet').count()) === 1);
+  await page.click('#tab-pet');
+  check('桌宠面板显示', await page.locator('#panel-pet').isVisible());
+  await page.screenshot({ path: join(OUT, '20-pet-panel.png') });
+
+  // 打开显示 → 首次加载运行时与模型（约 6MB，本地服务较快）
+  await page.click('#pet-visible');
+  let petLoaded = true;
+  try {
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pet');
+      return el && !el.hidden && el.style.width && parseInt(el.style.width, 10) > 50;
+    }, { timeout: 25000 });
+  } catch {
+    petLoaded = false;
+  }
+  check('打开开关后桌宠加载完成', petLoaded);
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(500);
+  const petInfo = await page.evaluate(() => {
+    const el = document.querySelector('#pet');
+    const r = el.getBoundingClientRect();
+    return { hidden: el.hidden, z: el.style.zIndex, w: Math.round(r.width), h: Math.round(r.height), left: Math.round(r.left), top: Math.round(r.top) };
+  });
+  check('桌宠可见且默认在右下角', !petInfo.hidden && petInfo.left > 500 && petInfo.top > 100, JSON.stringify(petInfo));
+  check('默认层级为普通 30', petInfo.z === '30', `z=${petInfo.z}`);
+  // 发送按钮不被普通层级桌宠挡住
+  const sendClear = await page.evaluate(() => {
+    const btn = document.querySelector('#btn-send');
+    const r = btn.getBoundingClientRect();
+    const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return btn.contains(top) || top === btn;
+  });
+  check('桌宠不挡发送按钮', sendClear);
+  await page.screenshot({ path: join(OUT, '21-pet-visible.png') });
+
+  // 缩放 1.5x
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-pet');
+  await page.locator('#pet-scale').evaluate((el) => {
+    el.value = '150';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  });
+  await page.waitForTimeout(250);
+  const petScaled = await page.evaluate(() => parseInt(document.querySelector('#pet').style.height, 10));
+  check('缩放 1.5x 高度约 630', petScaled > 600 && petScaled < 660, `h=${petScaled}`);
+  check('缩放数值显示 1.5x', (await page.locator('#pet-scale-value').textContent()) === '1.5x');
+
+  // 置顶
+  await page.click('#pet-topmost');
+  await page.waitForTimeout(100);
+  check('置顶切换 z-index 1500', (await page.evaluate(() => document.querySelector('#pet').style.zIndex)) === '1500');
+  await page.screenshot({ path: join(OUT, '22-pet-topmost.png') });
+  // 置顶时桌宠正盖在开关上方（真实场景可拖走），用 JS 触发关闭继续测试
+  await page.locator('#pet-topmost').evaluate((el) => el.click());
+  await page.click('#btn-close-settings');
+  await page.waitForTimeout(300);
+
+  // 拖动
+  const dragBefore = await page.evaluate(() => {
+    const r = document.querySelector('#pet').getBoundingClientRect();
+    return { x: r.left, y: r.top, w: r.width, h: r.height };
+  });
+  const dragSx = dragBefore.x + dragBefore.w / 2;
+  const dragSy = dragBefore.y + dragBefore.h / 2;
+  await page.mouse.move(dragSx, dragSy);
+  await page.mouse.down();
+  await page.mouse.move(dragSx - 380, dragSy - 350, { steps: 8 });
+  await page.mouse.up();
+  await page.waitForTimeout(250);
+  const dragAfter = await page.evaluate(() => {
+    const r = document.querySelector('#pet').getBoundingClientRect();
+    return { x: r.left, y: r.top, pos: JSON.parse(localStorage.getItem('ai-multi-chat-v1')).settings.pet.position };
+  });
+  check('拖动后位置变化', Math.abs(dragAfter.x - dragBefore.x) > 100 && Math.abs(dragAfter.y - dragBefore.y) > 100, JSON.stringify({ before: dragBefore, after: dragAfter }));
+  check('拖动位置已落盘', !!dragAfter.pos && Math.abs(dragAfter.pos.x - dragAfter.x / 1440) < 0.03, JSON.stringify(dragAfter.pos));
+
+  // 刷新保持
+  await page.reload({ waitUntil: 'networkidle' });
+  let petKept = true;
+  try {
+    await page.waitForFunction(() => {
+      const el = document.querySelector('#pet');
+      return el && !el.hidden && el.style.width;
+    }, { timeout: 25000 });
+  } catch {
+    petKept = false;
+  }
+  const keptInfo = await page.evaluate(() => {
+    const el = document.querySelector('#pet');
+    return { hidden: el.hidden, h: el.style.height, st: JSON.parse(localStorage.getItem('ai-multi-chat-v1')).settings.pet };
+  });
+  check('刷新后桌宠保持显示', petKept && !keptInfo.hidden);
+  check('刷新后缩放与位置保持', keptInfo.st.scale === 1.5 && !!keptInfo.st.position, JSON.stringify(keptInfo.st));
+
+  // 关闭
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-pet');
+  await page.click('#pet-visible');
+  await page.waitForTimeout(250);
+  check('关闭后桌宠隐藏', await page.evaluate(() => document.querySelector('#pet').hidden));
+  check('关闭已落盘', (await readState()).settings.pet.visible === false);
 
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));

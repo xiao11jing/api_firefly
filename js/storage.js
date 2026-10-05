@@ -5,6 +5,7 @@ import { isPrice, normalizeUsage, numOrNull } from './usage.js';
 import { normalizeBgOpacity } from './background.js';
 import { DEFAULT_AI_NAME, DEFAULT_USER_NAME, defaultProfile, normalizeProfileName } from './profile.js';
 import { normalizeSplash } from './splash.js';
+import { normalizePet } from './pet.js';
 
 export const STORAGE_KEY = 'ai-multi-chat-v1';
 
@@ -45,7 +46,14 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile(), splash: null, fontScale: DEFAULT_FONT_SCALE },
+    settings: {
+      theme: DEFAULT_THEME,
+      background: null,
+      profile: defaultProfile(),
+      splash: null,
+      fontScale: DEFAULT_FONT_SCALE,
+      pet: normalizePet(null),
+    },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
     promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
@@ -118,6 +126,13 @@ export function setFontScale(state, value) {
   const fontScale = normalizeFontScale(value);
   state.settings = { ...(state.settings || {}), fontScale };
   return fontScale;
+}
+
+/** 合并桌宠配置 patch（visible/topmost/scale/position）；返回归一化后的完整配置 */
+export function setPet(state, patch = {}) {
+  const pet = normalizePet({ ...(state.settings && state.settings.pet), ...patch });
+  state.settings = { ...(state.settings || {}), pet };
+  return pet;
 }
 
 /** 归一化单个身份（用户 / AI）的名称与头像 */
@@ -239,6 +254,7 @@ function normalizeState(s) {
       profile: normalizeProfile(s.settings && s.settings.profile),
       splash: normalizeSplash(s.settings && s.settings.splash),
       fontScale: normalizeFontScale(s.settings && s.settings.fontScale),
+      pet: normalizePet(s.settings && s.settings.pet),
     },
     compare: normalizeCompare(s.compare),
     promptTemplates: Array.isArray(s.promptTemplates)

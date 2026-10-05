@@ -29,6 +29,7 @@ import {
 import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
 import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
 import { initTooltips } from './tooltip.js';
+import { hidePet, initPet, normalizePet, petApplyScale, petApplyTopmost, showPet } from './pet.js';
 import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
@@ -1734,6 +1735,36 @@ function renderFontScaleControls() {
   $('#font-scale-value').textContent = `${Math.round(scale * 100)}%`;
 }
 
+// ---------- 桌宠 ----------
+
+function renderPetControls() {
+  const pet = normalizePet(state.settings && state.settings.pet);
+  $('#pet-visible').setAttribute('aria-checked', String(pet.visible));
+  $('#pet-topmost').setAttribute('aria-checked', String(pet.topmost));
+  $('#pet-scale').value = String(Math.round(pet.scale * 100));
+  $('#pet-scale-value').textContent = `${pet.scale.toFixed(1)}x`;
+}
+
+/** 把当前配置应用到桌宠 DOM：层级、可见性（含首次加载）、位置 */
+async function applyPetToDom() {
+  const pet = normalizePet(state.settings && state.settings.pet);
+  petApplyTopmost(pet.topmost);
+  if (pet.visible) {
+    try {
+      await showPet({ scale: pet.scale, position: pet.position });
+    } catch (err) {
+      console.error('桌宠加载失败', err);
+      store.setPet(state, { visible: false });
+      persist();
+      renderPetControls();
+      toast(`桌宠加载失败：${(err && err.message) || err}`, 'error');
+    }
+  } else {
+    hidePet();
+    petApplyScale(pet.scale); // 隐藏时仅记录，打开时生效
+  }
+}
+
 /**
  * 超过最长边或体积上限时用画布等比缩放并重新编码为 JPEG，
  * 否则沿用原图（小图保留 PNG 透明通道）。背景图与头像共用。
@@ -1842,7 +1873,7 @@ function applyProfilePatch(patch) {
 }
 
 /** 切换设置面板：'appearance' | 'api' | 'prompt' | 'profile' */
-const SETTINGS_PANELS = ['appearance', 'api', 'prompt', 'profile'];
+const SETTINGS_PANELS = ['appearance', 'api', 'prompt', 'pet', 'profile'];
 
 function switchSettingsPanel(panel) {
   const target = SETTINGS_PANELS.includes(panel) ? panel : 'appearance';
@@ -1861,6 +1892,7 @@ function openSettings(panel = 'appearance') {
   renderBackgroundControls();
   renderSplashControls();
   renderFontScaleControls();
+  renderPetControls();
   renderProfileForm();
   renderProviderList();
   renderTemplateList();
@@ -2230,6 +2262,34 @@ function bind() {
     renderFontScaleControls();
   });
 
+  // 桌宠
+  $('#pet-visible').addEventListener('click', async () => {
+    const cur = normalizePet(state.settings && state.settings.pet);
+    store.setPet(state, { visible: !cur.visible });
+    persist();
+    renderPetControls();
+    await applyPetToDom();
+  });
+  $('#pet-topmost').addEventListener('click', () => {
+    const cur = normalizePet(state.settings && state.settings.pet);
+    const next = store.setPet(state, { topmost: !cur.topmost });
+    persist();
+    renderPetControls();
+    petApplyTopmost(next.topmost);
+  });
+  // 缩放：拖动实时预览，松手落盘（与背景透明度同一交互）
+  $('#pet-scale').addEventListener('input', (e) => {
+    const scale = Number(e.target.value) / 100;
+    $('#pet-scale-value').textContent = `${scale.toFixed(1)}x`;
+    petApplyScale(scale);
+  });
+  $('#pet-scale').addEventListener('change', (e) => {
+    const pet = store.setPet(state, { scale: Number(e.target.value) / 100 });
+    persist();
+    renderPetControls();
+    petApplyScale(pet.scale);
+  });
+
   $('#btn-sidebar-settings').addEventListener('click', () => {
     closeSidebarOnMobile();
     openSettings('appearance');
@@ -2351,17 +2411,28 @@ function init() {
   applyBackground();
   bind();
   initTooltips(window);
+  initPet({
+    container: $('#pet'),
+    canvas: $('#pet-canvas'),
+    getConfig: () => normalizePet(state.settings && state.settings.pet),
+    onPosition: (position) => {
+      store.setPet(state, { position });
+      persist();
+    },
+  });
   renderAll();
   renderAttachments();
   renderThemeOptions();
   renderSplashControls();
   renderFontScaleControls();
+  renderPetControls();
   renderCompareUI();
   renderBrand();
   autoGrow();
   // 放在绑定与渲染之后：写入失败也不能让整个界面失去响应
   persist();
   bootSplash();
+  applyPetToDom(); // 未开启时是同步空操作；开启时后台加载模型
 }
 
 init();
