@@ -19,6 +19,20 @@ export const MAX_COMPARE_TARGETS = 2;
 export const MAX_PROMPT_CHARS = 20000;
 const MAX_PROMPT_NAME = 60;
 
+/** 字号缩放区间与默认值（整页 zoom，与 index.html 内联脚本的判断保持一致） */
+export const FONT_SCALE_MIN = 0.8;
+export const FONT_SCALE_MAX = 1.6;
+export const DEFAULT_FONT_SCALE = 1;
+
+/** 字号归一化：非法回退默认，超出范围收敛到边界，按 5% 步进取整 */
+export function normalizeFontScale(value, fallback = DEFAULT_FONT_SCALE) {
+  if (value === '' || value == null) return fallback;
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  const clamped = Math.min(FONT_SCALE_MAX, Math.max(FONT_SCALE_MIN, n));
+  return Math.round(clamped * 20) / 20;
+}
+
 /** 主题归一化：未知取值回退到默认主题 */
 export function normalizeTheme(value) {
   return THEMES.includes(value) ? value : DEFAULT_THEME;
@@ -31,7 +45,7 @@ export function defaultState() {
     sessions: [],
     activeSessionId: null,
     selectedModel: null, // { providerId, model }
-    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile(), splash: null },
+    settings: { theme: DEFAULT_THEME, background: null, profile: defaultProfile(), splash: null, fontScale: DEFAULT_FONT_SCALE },
     compare: { enabled: false, targets: [] }, // targets: [{ providerId, model }]
     promptTemplates: [], // [{ id, name, content, createdAt, updatedAt }]
   };
@@ -97,6 +111,13 @@ export function setSplash(state, meta) {
   const splash = normalizeSplash(meta);
   state.settings = { ...(state.settings || {}), splash };
   return splash;
+}
+
+/** 设置字号缩放（0.8~1.6）；返回生效后的值 */
+export function setFontScale(state, value) {
+  const fontScale = normalizeFontScale(value);
+  state.settings = { ...(state.settings || {}), fontScale };
+  return fontScale;
 }
 
 /** 归一化单个身份（用户 / AI）的名称与头像 */
@@ -217,6 +238,7 @@ function normalizeState(s) {
       background: normalizeBackground(s.settings && s.settings.background),
       profile: normalizeProfile(s.settings && s.settings.profile),
       splash: normalizeSplash(s.settings && s.settings.splash),
+      fontScale: normalizeFontScale(s.settings && s.settings.fontScale),
     },
     compare: normalizeCompare(s.compare),
     promptTemplates: Array.isArray(s.promptTemplates)

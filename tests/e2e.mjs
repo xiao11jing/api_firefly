@@ -683,7 +683,7 @@ try {
         leftOfPill: rb.x + rb.width <= pb.x + 1,
         filled: m ? Number(m[1]) / Number(m[2]) : null,
         high: ring.classList.contains('high'),
-        title: ring.getAttribute('title') || '',
+        title: ring.getAttribute('data-tip') || '', // 提示已从原生 title 迁到 data-tip
       };
     });
   const ring0 = await ringInfo();
@@ -956,6 +956,54 @@ try {
   await page.click('#btn-close-settings');
   await page.reload({ waitUntil: 'domcontentloaded' });
   check('移除后不再开屏', await page.locator('#splash-overlay').isHidden());
+
+  // ---------- 9e. 自定义悬停提示与字号缩放 ----------
+  // 悬停出现自定义气泡，原生 title 属性已从元素上移除
+  await page.hover('#btn-new-chat');
+  await page.locator('#global-tooltip.show').waitFor({ timeout: 2000 });
+  check('悬停显示自定义气泡', (await page.locator('#global-tooltip').textContent()) === '新会话');
+  check('原生 title 已移除', (await page.locator('#btn-new-chat').getAttribute('title')) === null);
+  await page.mouse.move(400, 500);
+  await page.waitForTimeout(400);
+  check('移开指针后气泡消失', await page.locator('#global-tooltip').isHidden());
+  // 键盘聚焦立即显示，失焦后消失
+  await page.locator('#btn-new-chat').focus();
+  await page.locator('#global-tooltip.show').waitFor({ timeout: 1000 });
+  check('聚焦显示气泡', (await page.locator('#global-tooltip').textContent()) === '新会话');
+  await page.evaluate(() => document.activeElement && document.activeElement.blur());
+  await page.waitForTimeout(300);
+  check('失焦后气泡消失', await page.locator('#global-tooltip').isHidden());
+
+  // 字号滑块：实时缩放 → 落盘 → 刷新保持 → 恢复默认
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-appearance');
+  const setFontScale = async (pct) => {
+    await page.locator('#font-scale').evaluate((el, v) => {
+      el.value = String(v);
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+    }, pct);
+    await page.waitForTimeout(100);
+  };
+  await setFontScale(130);
+  const zoom130 = await page.evaluate(() => document.documentElement.style.zoom);
+  check('字号调大后整页缩放', zoom130 === '1.3', `zoom=${zoom130}`);
+  check('字号数值显示', (await page.locator('#font-scale-value').textContent()) === '130%');
+  check('字号缩放已落盘', (await readState()).settings.fontScale === 1.3);
+  await page.screenshot({ path: join(OUT, '19-font-scale.png') });
+  await page.click('#btn-close-settings');
+  await page.reload({ waitUntil: 'networkidle' });
+  const zoomReload = await page.evaluate(() => document.documentElement.style.zoom);
+  check('刷新后字号保持', zoomReload === '1.3', `zoom=${zoomReload}`);
+  // 恢复 100%，避免影响后续断言
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-appearance');
+  await setFontScale(100);
+  check('恢复默认字号', (await page.evaluate(() => document.documentElement.style.zoom)) === '');
+  check('恢复默认已落盘', (await readState()).settings.fontScale === 1);
+  await page.click('#btn-close-settings');
 
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));

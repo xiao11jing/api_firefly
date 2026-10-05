@@ -1287,9 +1287,10 @@ mark.search-hit.active {
 }
 
 .modal {
-  width: min(960px, 100%);
+  /* 除以 --zoom：整页 zoom 会放大固定 px，但 92vh 不随 zoom 变，不补偿在 160% 时会溢出视口 */
+  width: min(calc(960px / var(--zoom, 1)), 100%);
   /* 固定高度：切换外观/API/提示词时整体尺寸保持一致，不再随内容跳动 */
-  height: min(680px, 92vh);
+  height: min(calc(680px / var(--zoom, 1)), 92vh);
   display: flex;
   flex-direction: column;
   background: var(--sidebar);
@@ -1481,8 +1482,8 @@ mark.search-hit.active {
 /* 按钮并排时按内容收缩，避免 width:100% 互相挤压导致文字换行 */
 .bg-picker-actions .ghost-btn { width: auto; white-space: nowrap; }
 
-.bg-opacity { margin-top: 14px; }
-.bg-opacity-head {
+.range-field { margin-top: 14px; }
+.range-field-head {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1490,9 +1491,9 @@ mark.search-hit.active {
   font-size: 12px;
   color: var(--muted);
 }
-.bg-opacity-head b { color: var(--ink); font-weight: 600; }
+.range-field-head b { color: var(--ink); font-weight: 600; }
 
-.bg-opacity input[type="range"] {
+.range-field input[type="range"] {
   width: 100%;
   height: 6px;
   margin: 8px 0 4px;
@@ -1501,7 +1502,7 @@ mark.search-hit.active {
   background: var(--surface-2);
   outline: none;
 }
-.bg-opacity input[type="range"]::-webkit-slider-thumb {
+.range-field input[type="range"]::-webkit-slider-thumb {
   appearance: none;
   width: 14px;
   height: 14px;
@@ -1509,7 +1510,7 @@ mark.search-hit.active {
   background: var(--accent);
   cursor: pointer;
 }
-.bg-opacity input[type="range"]::-moz-range-thumb {
+.range-field input[type="range"]::-moz-range-thumb {
   width: 14px;
   height: 14px;
   border: none;
@@ -1719,6 +1720,34 @@ mark.search-hit.active {
   font-size: 13.5px;
 }
 .danger-btn:hover { background: var(--danger-soft); }
+
+/* ---------- 全局悬停提示（替代原生 title） ---------- */
+
+.global-tooltip {
+  position: fixed;
+  z-index: 3000; /* 盖过提示条（999）与开屏层（2000） */
+  max-width: 280px;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: #242a34;
+  color: #e8ecf1;
+  font-size: 12.5px;
+  font-weight: 400;
+  line-height: 1.5;
+  white-space: pre-line;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+}
+.global-tooltip.show { opacity: 1; }
+[data-theme="light"] .global-tooltip {
+  background: #fff;
+  color: #24292f;
+  border-color: rgba(0, 0, 0, 0.07);
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.14);
+}
 
 /* ---------- Toast ---------- */
 .toast {

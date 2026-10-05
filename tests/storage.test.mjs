@@ -22,6 +22,8 @@ import {
   deleteProvider,
   normalizeTheme,
   setTheme,
+  normalizeFontScale,
+  setFontScale,
   setCompareEnabled,
   setCompareTargets,
   savePromptTemplate,
@@ -209,6 +211,30 @@ test('主题随状态持久化，刷新后保留', () => {
   setTheme(state, 'light');
   saveState(st, state);
   assert.equal(loadState(st).settings.theme, 'light');
+});
+
+test('normalizeFontScale 收敛到 80%~160% 并按 5% 取整', () => {
+  assert.equal(normalizeFontScale(1), 1);
+  assert.equal(normalizeFontScale(1.3), 1.3);
+  assert.equal(normalizeFontScale('1.25'), 1.25);
+  assert.equal(normalizeFontScale(0.7), 0.8); // 低于下限收敛
+  assert.equal(normalizeFontScale(2), 1.6); // 高于上限收敛
+  assert.equal(normalizeFontScale(1.23), 1.25); // 5% 步进取整
+  assert.equal(normalizeFontScale('abc'), 1); // 非法回退默认
+  assert.equal(normalizeFontScale(null), 1);
+  assert.equal(normalizeFontScale(undefined), 1);
+});
+
+test('setFontScale 写入并可经存取往返，刷新后保留', () => {
+  const st = fakeStorage();
+  const state = defaultState();
+  assert.equal(setFontScale(state, 1.4), 1.4);
+  assert.equal(state.settings.fontScale, 1.4);
+  saveState(st, state);
+  assert.equal(loadState(st).settings.fontScale, 1.4);
+  setFontScale(state, 1);
+  saveState(st, state);
+  assert.equal(loadState(st).settings.fontScale, 1);
 });
 
 test('归一化：非法或缺失主题回退为默认', () => {

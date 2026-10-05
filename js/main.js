@@ -28,6 +28,7 @@ import {
 } from './background.js';
 import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
 import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
+import { initTooltips } from './tooltip.js';
 import { exportFilename, sessionToMarkdown } from './export.js';
 import { normalizeQuery, searchSession } from './search.js';
 import {
@@ -227,7 +228,7 @@ function renderSessions() {
 
     const del = document.createElement('button');
     del.className = 's-del';
-    del.title = '删除会话';
+    del.dataset.tip = '删除会话';
     del.innerHTML =
       '<svg viewBox="0 0 16 16" width="13" height="13"><path d="M3 4.5h10M6.5 4.5V3h3v1.5M5 4.5l.6 8h4.8l.6-8" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round"/></svg>';
     del.addEventListener('click', (e) => {
@@ -526,7 +527,7 @@ function renderRoleHead(msg) {
     const name = document.createElement('span');
     name.className = 'branch-model';
     name.textContent = msg.model.model;
-    name.title = provider ? `${provider.name} · ${msg.model.model}` : msg.model.model;
+    name.dataset.tip = provider ? `${provider.name} · ${msg.model.model}` : msg.model.model;
     head.appendChild(name);
   }
   return head;
@@ -547,7 +548,7 @@ function renderAvatar(side) {
     img.src = profile.avatar;
     img.alt = '';
     box.appendChild(img);
-    box.title = profile.name;
+    box.dataset.tip = profile.name;
   } else {
     box.textContent = avatarInitial(profile.name);
   }
@@ -596,13 +597,13 @@ function renderUsageFoot(msg) {
     const price = resolvePrice(providerById(msg.model && msg.model.providerId), msg.model && msg.model.model);
     if (price) {
       const item = usageItem(formatCost(computeCost(u, price).total), 'u-cost');
-      item.title =
+      item.dataset.tip =
         price.source === 'provider'
           ? '按该服务配置的单价估算（人民币）'
           : '按内置参考价估算（人民币，可能已过时），可在 API 服务设置中覆盖';
       foot.appendChild(item);
     }
-    foot.title = u.estimated
+    foot.dataset.tip = u.estimated
       ? '接口未返回 usage，此处按字符数粗略估算（图片按固定值计）'
       : '用量来自接口返回的 usage 字段';
   }
@@ -1017,10 +1018,10 @@ function renderPromptFlag() {
   const btn = $('#btn-pill-prompt');
   $('#prompt-flag').classList.toggle('hidden', !snapshot);
   btn.classList.toggle('has-value', !!snapshot);
-  btn.title = snapshot
+  btn.dataset.tip = snapshot
     ? `系统提示：${snapshot.name || '未命名模板'}（${snapshot.text.length} 字）`
     : '系统提示（本会话）';
-  btn.setAttribute('aria-label', btn.title);
+  btn.setAttribute('aria-label', btn.dataset.tip);
 }
 
 function closePromptMenu() {
@@ -1460,7 +1461,7 @@ function renderAttachChip(a) {
   const name = document.createElement('span');
   name.className = 'chip-name';
   name.textContent = a.name || '未命名文件';
-  name.title = a.name || '';
+  name.dataset.tip = a.name || '';
   const sub = document.createElement('span');
   sub.className = 'chip-sub';
   sub.textContent = a.loading ? '解析中…' : chipSubText(a);
@@ -1469,7 +1470,7 @@ function renderAttachChip(a) {
   const del = document.createElement('button');
   del.className = 'chip-del';
   del.type = 'button';
-  del.title = '移除';
+  del.dataset.tip = '移除';
   del.setAttribute('aria-label', `移除 ${a.name || '附件'}`);
   del.innerHTML =
     '<svg viewBox="0 0 16 16" width="11" height="11"><path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>';
@@ -1520,7 +1521,7 @@ function renderContextRing() {
   const target = targets[0] || null;
   if (!session || !target) {
     box.classList.add('hidden');
-    box.removeAttribute('title');
+    box.removeAttribute('data-tip');
     return;
   }
 
@@ -1540,7 +1541,7 @@ function renderContextRing() {
       : limit.source === 'builtin'
         ? '按模型名匹配的内置参考值'
         : '未匹配到该模型，按默认值';
-  box.title =
+  box.dataset.tip =
     `本次请求约占上下文 ${formatTokens(tokens)} / ${formatTokens(limit.tokens)}（${Math.round(ratio * 100)}%）\n` +
     `上限${sourceText}，可在「API 服务」设置里手动指定`;
   box.setAttribute(
@@ -1720,6 +1721,19 @@ function renderSplashControls() {
   $('#splash-thumb').classList.toggle('active', !!splash);
 }
 
+/** 整页字号缩放：zoom 作用在根元素上，head 内联脚本会在首屏渲染前预应用 */
+function applyFontScale(scale) {
+  document.documentElement.style.zoom = scale === 1 ? '' : String(scale);
+  // --zoom 供 CSS 反向补偿固定尺寸（如设置弹窗），避免大字号下溢出视口
+  document.documentElement.style.setProperty('--zoom', String(scale));
+}
+
+function renderFontScaleControls() {
+  const scale = store.normalizeFontScale(state.settings && state.settings.fontScale);
+  $('#font-scale').value = String(Math.round(scale * 100));
+  $('#font-scale-value').textContent = `${Math.round(scale * 100)}%`;
+}
+
 /**
  * 超过最长边或体积上限时用画布等比缩放并重新编码为 JPEG，
  * 否则沿用原图（小图保留 PNG 透明通道）。背景图与头像共用。
@@ -1846,6 +1860,7 @@ function openSettings(panel = 'appearance') {
   renderThemeOptions();
   renderBackgroundControls();
   renderSplashControls();
+  renderFontScaleControls();
   renderProfileForm();
   renderProviderList();
   renderTemplateList();
@@ -2202,6 +2217,19 @@ function bind() {
     toast('已移除开屏动画');
   });
 
+  // 字号缩放：拖动时只做实时预览，松手才写入存储（与背景透明度同一交互）
+  $('#font-scale').addEventListener('input', (e) => {
+    const pct = Number(e.target.value);
+    $('#font-scale-value').textContent = `${pct}%`;
+    applyFontScale(pct / 100);
+  });
+  $('#font-scale').addEventListener('change', (e) => {
+    const scale = store.setFontScale(state, Number(e.target.value) / 100);
+    persist();
+    applyFontScale(scale);
+    renderFontScaleControls();
+  });
+
   $('#btn-sidebar-settings').addEventListener('click', () => {
     closeSidebarOnMobile();
     openSettings('appearance');
@@ -2322,10 +2350,12 @@ function init() {
   applyTheme(state.settings && state.settings.theme);
   applyBackground();
   bind();
+  initTooltips(window);
   renderAll();
   renderAttachments();
   renderThemeOptions();
   renderSplashControls();
+  renderFontScaleControls();
   renderCompareUI();
   renderBrand();
   autoGrow();
