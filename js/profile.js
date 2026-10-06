@@ -7,7 +7,7 @@
 export const PROFILE_SIDES = ['user', 'ai'];
 
 export const DEFAULT_USER_NAME = '你';
-export const DEFAULT_AI_NAME = 'AI';
+export const DEFAULT_AI_NAME = 'Firefly';
 
 /** 名称的字素上限 */
 export const MAX_PROFILE_NAME = 24;

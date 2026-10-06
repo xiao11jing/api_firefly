@@ -35,16 +35,13 @@
     <button class="splash-skip" id="btn-splash-skip" type="button">跳过</button>
   </div>
   <script>
-    // 开屏动画判定：配置了视频且本标签页会话还没播过才显示，随后置标记（刷新不重播）。
-    // 逻辑需与 js/splash.js 的校验保持一致；存储键需与 js/storage.js 的 STORAGE_KEY 保持一致。
+    // 开屏动画判定：开关未关闭且本标签页会话还没播过才显示，随后置标记（刷新不重播）。
+    // 出厂默认开——未配置自定义视频时由 bootSplash 播内置默认视频；仅显式 splashEnabled===false 才不播。
+    // 存储键需与 js/storage.js 的 STORAGE_KEY 保持一致；条件需与 js/defaults.js 的 splashEnabledOf 一致。
     try {
       var _splashState = JSON.parse(localStorage.getItem('ai-multi-chat-v1') || 'null');
-      if (
-        _splashState &&
-        _splashState.settings &&
-        _splashState.settings.splash &&
-        !sessionStorage.getItem('splashPlayed')
-      ) {
+      var _splashSettings = (_splashState && _splashState.settings) || {};
+      if (_splashSettings.splashEnabled !== false && !sessionStorage.getItem('splashPlayed')) {
         sessionStorage.setItem('splashPlayed', '1');
         document.getElementById('splash-overlay').hidden = false;
       }
@@ -292,8 +289,8 @@
             <div class="bg-picker">
               <span class="bg-thumb" id="bg-thumb" aria-hidden="true"></span>
               <div class="bg-picker-text">
-                <span class="bg-picker-name" id="bg-name">未选择图片</span>
-                <span class="bg-picker-note" id="bg-note">大图会自动等比压缩后再保存</span>
+                <span class="bg-picker-name" id="bg-name">出厂默认背景</span>
+                <span class="bg-picker-note" id="bg-note">background.png · 选择图片可替换，移除后回到默认</span>
               </div>
               <div class="bg-picker-actions">
                 <button class="ghost-btn" type="button" id="btn-bg-choose">选择图片</button>
@@ -310,12 +307,21 @@
             </div>
 
             <h3 class="panel-title">开屏动画</h3>
-            <p class="panel-desc">选择一个本地视频，打开应用时全屏静音播放一次（同一标签页内刷新不重播）。视频仅保存在本地浏览器，不会上传。</p>
+            <p class="panel-desc">打开应用时全屏静音播放一次（同一标签页内刷新不重播）。未选择视频时使用出厂内置的 splash.mp4，可选择本地视频替换；关闭开关则完全停用。</p>
+            <div class="setting-row">
+              <div class="setting-row-text">
+                <span>开屏动画</span>
+                <span class="row-note">关闭后打开应用直接进入界面</span>
+              </div>
+              <button class="switch" id="btn-splash-toggle" type="button" role="switch" aria-checked="true" aria-label="开屏动画">
+                <span class="switch-thumb"></span>
+              </button>
+            </div>
             <div class="bg-picker">
               <span class="bg-thumb splash-thumb" id="splash-thumb" aria-hidden="true">▶</span>
               <div class="bg-picker-text">
-                <span class="bg-picker-name" id="splash-name">未选择视频</span>
-                <span class="bg-picker-note" id="splash-note">支持 mp4 / webm 等浏览器可播格式，建议 50MB 以内</span>
+                <span class="bg-picker-name" id="splash-name">出厂默认开屏视频</span>
+                <span class="bg-picker-note" id="splash-note">splash.mp4 · 选择视频可替换，关闭开关停用开屏</span>
               </div>
               <div class="bg-picker-actions">
                 <button class="ghost-btn" type="button" id="btn-splash-choose">选择视频</button>

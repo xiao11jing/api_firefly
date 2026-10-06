@@ -29,6 +29,12 @@ import {
 } from './background.js';
 import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
 import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
+import {
+  DEFAULT_SPLASH_SRC,
+  effectiveAvatarSrc,
+  effectiveBackground,
+  splashEnabledOf,
+} from './defaults.js';
 import { initTooltips } from './tooltip.js';
 import { hidePet, initPet, normalizePet, petApplyScale, petApplyTopmost, showPet } from './pet.js';
 import { exportFilename, formatDateTime, safeFilename, sessionToMarkdown } from './export.js';
@@ -581,15 +587,25 @@ function profileOf(side) {
   return store.normalizeProfile(state.settings && state.settings.profile)[side];
 }
 
-/** 消息头像：设了图片用图片，否则用名称首字占位 */
+/** 消息头像：自定义图片 > AI 出厂默认图 > 名称首字占位 */
 function renderAvatar(side) {
   const profile = profileOf(side);
   const box = document.createElement('span');
   box.className = 'msg-avatar';
-  if (profile.avatar) {
+  const src = effectiveAvatarSrc(side, profile.avatar);
+  if (src) {
     const img = document.createElement('img');
-    img.src = profile.avatar;
+    img.src = src;
     img.alt = '';
+    img.addEventListener(
+      'error',
+      () => {
+        // 出厂默认图缺失/加载失败时回退首字占位，不留空头像
+        box.replaceChildren();
+        box.textContent = avatarInitial(profile.name);
+      },
+      { once: true }
+    );
     box.appendChild(img);
     box.dataset.tip = profile.name;
   } else {
@@ -2647,44 +2663,46 @@ function currentBackground() {
   return (state.settings && state.settings.background) || null;
 }
 
-/** 把背景配置应用到界面：图片层、透明度与启用标记 */
+/** 把背景配置应用到界面：未设置时使用出厂默认背景，图片层始终有图 */
 function applyBackground() {
   const layer = $('#bg-layer');
   if (!layer) return;
-  const bg = currentBackground();
-  if (!bg) {
-    layer.style.backgroundImage = '';
-    layer.style.opacity = '';
-    document.documentElement.classList.remove('has-bg');
-    return;
-  }
+  const bg = effectiveBackground(currentBackground());
   layer.style.backgroundImage = `url("${bg.dataUrl}")`;
   layer.style.opacity = String(bg.opacity / 100);
   document.documentElement.classList.add('has-bg');
 }
 
 function renderBackgroundControls() {
-  const bg = currentBackground();
-  const opacity = bg ? bg.opacity : DEFAULT_BG_OPACITY;
-  $('#bg-opacity').value = String(opacity);
-  $('#bg-opacity-value').textContent = `${opacity}%`;
-  $('#bg-opacity-row').classList.toggle('hidden', !bg);
-  $('#btn-bg-clear').classList.toggle('hidden', !bg);
-  $('#bg-thumb').style.backgroundImage = bg ? `url("${bg.dataUrl}")` : '';
-  $('#bg-name').textContent = bg ? '已设置背景图片' : '未选择图片';
-  $('#bg-note').textContent = bg
-    ? `${formatBytes(Math.round(bg.dataUrl.length * 0.75))} · 仅保存在本地`
-    : '大图会自动等比压缩后再保存';
+  const bg = effectiveBackground(currentBackground());
+  $('#bg-opacity').value = String(bg.opacity);
+  $('#bg-opacity-value').textContent = `${bg.opacity}%`;
+  // 出厂默认背景的透明度固定取内置默认值，自定义后才开放调节
+  $('#bg-opacity-row').classList.toggle('hidden', bg.isDefault);
+  $('#btn-bg-clear').classList.toggle('hidden', bg.isDefault);
+  $('#bg-thumb').style.backgroundImage = `url("${bg.dataUrl}")`;
+  $('#bg-name').textContent = bg.isDefault ? '出厂默认背景' : '已设置背景图片';
+  $('#bg-note').textContent = bg.isDefault
+    ? 'background.png · 选择图片可替换，移除后回到默认'
+    : `${formatBytes(Math.round(bg.dataUrl.length * 0.75))} · 仅保存在本地`;
 }
 
 function renderSplashControls() {
-  const splash = (state.settings && state.settings.splash) || null;
-  $('#splash-name').textContent = splash ? splash.name : '未选择视频';
+  const settings = state.settings || {};
+  const splash = settings.splash || null;
+  const enabled = splashEnabledOf(settings);
+  $('#splash-name').textContent = splash ? splash.name : '出厂默认开屏视频';
   $('#splash-note').textContent = splash
     ? `${formatBytes(splash.size)} · 仅保存在本地`
-    : '支持 mp4 / webm 等浏览器可播格式，建议 50MB 以内';
+    : enabled
+      ? 'splash.mp4 · 选择视频可替换，关闭开关停用开屏'
+      : '开屏动画已关闭';
   $('#btn-splash-clear').classList.toggle('hidden', !splash);
   $('#splash-thumb').classList.toggle('active', !!splash);
+  const toggle = $('#btn-splash-toggle');
+  if (toggle) {
+    toggle.setAttribute('aria-checked', String(enabled));
+  }
 }
 
 /** 整页字号缩放：zoom 作用在根元素上，head 内联脚本会在首屏渲染前预应用 */
@@ -2795,10 +2813,12 @@ function renderProfileForm() {
   $('#pf-ai-name').value = profile.ai.name;
   for (const side of ['user', 'ai']) {
     const preview = $(`#avatar-preview-${side}`);
-    const avatar = profile[side].avatar;
-    preview.style.backgroundImage = avatar ? `url("${avatar}")` : '';
-    preview.textContent = avatar ? '' : avatarInitial(profile[side].name);
-    $(`#btn-avatar-${side}-clear`).classList.toggle('hidden', !avatar);
+    const custom = profile[side].avatar;
+    const src = effectiveAvatarSrc(side, custom);
+    preview.style.backgroundImage = src ? `url("${src}")` : '';
+    preview.textContent = src ? '' : avatarInitial(profile[side].name);
+    // 移除按钮只对用户自定义头像出现，出厂默认没有「移除」语义
+    $(`#btn-avatar-${side}-clear`).classList.toggle('hidden', !custom);
   }
 }
 
@@ -3245,7 +3265,15 @@ function bind() {
     store.setSplash(state, null);
     persist();
     renderSplashControls();
-    toast('已移除开屏动画');
+    toast('已移除自定义开屏，回到出厂默认');
+  });
+
+  // 开屏动画总开关：关闭后（含出厂默认视频）一律不再播放
+  $('#btn-splash-toggle').addEventListener('click', () => {
+    const next = store.setSplashEnabled(state, !splashEnabledOf(state.settings));
+    persist();
+    renderSplashControls();
+    toast(next ? '开屏动画已开启' : '开屏动画已关闭');
   });
 
   // 字号缩放：拖动时只做实时预览，松手才写入存储（与背景透明度同一交互）
@@ -3368,6 +3396,10 @@ function dismissSplash() {
 async function bootSplash() {
   const overlay = $('#splash-overlay');
   if (!overlay || overlay.hidden) return;
+  if (!splashEnabledOf(state.settings)) {
+    dismissSplash();
+    return;
+  }
   const video = $('#splash-video');
   video.addEventListener('ended', dismissSplash);
   video.addEventListener('error', dismissSplash);
@@ -3382,12 +3414,13 @@ async function bootSplash() {
     blob = null;
   }
   if (splashDismissed) return;
-  if (!blob) {
-    dismissSplash();
-    return;
+  if (blob) {
+    splashUrl = URL.createObjectURL(blob);
+    video.src = splashUrl;
+  } else {
+    // 未设置自定义视频时播出厂内置默认视频；文件缺失则由 error 事件淡出
+    video.src = DEFAULT_SPLASH_SRC;
   }
-  splashUrl = URL.createObjectURL(blob);
-  video.src = splashUrl;
   try {
     await video.play();
   } catch {

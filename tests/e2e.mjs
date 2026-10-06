@@ -97,6 +97,28 @@ const browser = await chromium.launch({ channel: 'msedge', headless: true });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 const page = await context.newPage();
 
+// 出厂开屏默认为「开」：默认压掉开屏标记，避免遮挡绝大多数交互；
+// 开屏相关用例用 allowSplash()/blockSplash() 显式放开或恢复（见 9d）
+await context.addInitScript(() => {
+  try {
+    if (!localStorage.getItem('e2e-allow-splash')) sessionStorage.setItem('splashPlayed', '1');
+  } catch {
+    /* 存储不可用时忽略 */
+  }
+});
+/** 放开开屏：下一次导航真正播放（清会话标记 + 打开白名单） */
+const allowSplash = (p) =>
+  p.evaluate(() => {
+    localStorage.setItem('e2e-allow-splash', '1');
+    sessionStorage.removeItem('splashPlayed');
+  });
+/** 恢复默认屏蔽（开屏用例收尾调用，避免影响后续交互） */
+const blockSplash = (p) =>
+  p.evaluate(() => {
+    localStorage.removeItem('e2e-allow-splash');
+    sessionStorage.setItem('splashPlayed', '1');
+  });
+
 /** 直接读取本地状态，便于断言持久化结果（例如系统提示快照） */
 const readState = () => page.evaluate(() => JSON.parse(localStorage.getItem('ai-multi-chat-v1')));
 const activeSessionState = async () => {
@@ -130,7 +152,7 @@ page.on('pageerror', (e) => pageErrors.push(String(e)));
 try {
   // ---------- 1. 首屏：无 provider 的空状态 ----------
   await page.goto(APP, { waitUntil: 'networkidle' });
-  check('首屏显示欢迎标题', (await page.locator('.empty-state h3').textContent()) === 'AI来陪你聊天和思考');
+  check('首屏显示欢迎标题', (await page.locator('.empty-state h3').textContent()) === 'Firefly来陪你聊天和思考');
   check('首屏保留未配置提示', (await page.locator('.welcome-note').textContent()).includes('还没有配置 API 服务'));
   check('侧边栏左下角有设置按钮', await page.locator('#btn-sidebar-settings').isVisible());
   await page.screenshot({ path: join(OUT, '01-empty.png') });
@@ -204,7 +226,7 @@ try {
 
   // ---------- 6. 新会话 + 多图附件 ----------
   await page.click('#btn-new-chat');
-  check('新会话进入欢迎页', (await page.locator('.empty-state h3').textContent()) === 'AI来陪你聊天和思考');
+  check('新会话进入欢迎页', (await page.locator('.empty-state h3').textContent()) === 'Firefly来陪你聊天和思考');
   check('新会话为欢迎布局', await page.evaluate(() => document.documentElement.classList.contains('is-welcome')));
   check(
     '附件入口为加号图标',
@@ -299,7 +321,7 @@ try {
     '导出含附件名、模型标注与外部说明',
     exported.includes('**文档附件：notes.md**') &&
       exported.includes('文档附件：payload.json') &&
-      /## AI（Mock 服务 · mock-model）/.test(exported) &&
+      /## Firefly（Mock 服务 · mock-model）/.test(exported) &&
       exported.includes('图片附件仅保留文件名')
   );
   check(
@@ -610,6 +632,10 @@ try {
   check('切换设置面板时弹窗尺寸不变', new Set(modalSizes).size === 1, modalSizes.join(' / '));
 
   await page.click('#tab-appearance');
+  check(
+    '未设置时应用出厂默认背景',
+    await page.evaluate(() => document.querySelector('#bg-layer').style.backgroundImage.includes('assets/defaults/background.png'))
+  );
   await page.setInputFiles('#bg-input', IMG_PATH);
   await page.waitForTimeout(500);
   check('设置背景后根元素带 has-bg', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
@@ -661,7 +687,11 @@ try {
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#btn-bg-clear');
   await page.waitForTimeout(300);
-  check('移除后不再有 has-bg', await page.evaluate(() => !document.documentElement.classList.contains('has-bg')));
+  check('移除后回到出厂默认背景', await page.evaluate(() => document.documentElement.classList.contains('has-bg')));
+  check(
+    '默认背景指向内置图片',
+    await page.evaluate(() => document.querySelector('#bg-layer').style.backgroundImage.includes('assets/defaults/background.png'))
+  );
   check('移除后背景配置已清空', (await readState()).settings.background === null);
   await page.click('#btn-close-settings');
 
@@ -742,8 +772,12 @@ try {
   await page.click('#tab-profile');
   check('导航可切到个人资料面板', await page.locator('#panel-profile').isVisible());
   check('默认用户名为「你」', (await page.inputValue('#pf-user-name')) === '你');
-  check('默认 AI 名为「AI」', (await page.inputValue('#pf-ai-name')) === 'AI');
+  check('默认 AI 名为「Firefly」', (await page.inputValue('#pf-ai-name')) === 'Firefly');
   check('默认不带头像（用首字占位）', (await page.locator('.profile-avatar').first().textContent()) === '你');
+  check(
+    'AI 头像预览为出厂默认图',
+    await page.evaluate(() => (document.querySelector('#avatar-preview-ai').style.backgroundImage || '').includes('assets/defaults/avatar.png'))
+  );
 
   const setProfileName = async (sel, value) => {
     await page.fill(sel, value);
@@ -825,6 +859,10 @@ try {
   await page.waitForTimeout(300);
   check('移除后头像配置清空', (await readState()).settings.profile.user.avatar === null);
   check('预览回到首字占位', (await page.locator('#avatar-preview-user').textContent()) === '小');
+  check(
+    'AI 头像回到出厂默认图',
+    await page.evaluate(() => (document.querySelector('#avatar-preview-ai').style.backgroundImage || '').includes('assets/defaults/avatar.png'))
+  );
   await page.click('#btn-close-settings');
   await page.waitForTimeout(200);
   check('消息头像回到首字占位', (await page.locator('.msg.user .msg-avatar img').count()) === 0);
@@ -924,6 +962,7 @@ try {
   await page.waitForFunction(() => document.querySelector('#settings-mask').classList.contains('hidden'));
 
   // 进入页面播放一次，播完自动淡出进入界面
+  await allowSplash(page);
   await page.reload({ waitUntil: 'domcontentloaded' });
   const splashShown = await page.locator('#splash-overlay').isVisible();
   check('进入页面显示开屏动画', splashShown);
@@ -963,17 +1002,38 @@ try {
   check('跳过按钮立即进入界面', splashSkipped);
   await splashPage.close();
 
-  // 移除后不再播放
+  // 移除自定义后回到出厂默认开屏
   await page.click('#btn-sidebar-settings');
   await page.locator('#settings-mask:not(.hidden)').waitFor();
   await page.click('#tab-appearance');
   await page.click('#btn-splash-clear');
   await page.waitForTimeout(200);
-  check('移除后回到未选择', (await page.locator('#splash-name').textContent()) === '未选择视频');
+  check('移除后回到出厂默认文案', (await page.locator('#splash-name').textContent()) === '出厂默认开屏视频');
   check('移除已落盘', (await readState()).settings.splash === null);
   await page.click('#btn-close-settings');
+  // 未配置自定义且开关开启时，重新进入播出厂内置视频
+  await allowSplash(page);
   await page.reload({ waitUntil: 'domcontentloaded' });
-  check('移除后不再开屏', await page.locator('#splash-overlay').isHidden());
+  const defaultSplashShown = await page.locator('#splash-overlay').isVisible();
+  check('未配置时播出厂开屏', defaultSplashShown);
+  if (defaultSplashShown) {
+    const defSrc = await page.locator('#splash-video').getAttribute('src');
+    check('出厂开屏使用内置视频', (defSrc || '').includes('assets/defaults/splash.mp4'), defSrc);
+    await page.click('#btn-splash-skip');
+    await page.locator('#splash-overlay').waitFor({ state: 'hidden', timeout: 3000 });
+  }
+  // 关闭开关后（含出厂视频）一律不再播放
+  await page.click('#btn-sidebar-settings');
+  await page.locator('#settings-mask:not(.hidden)').waitFor();
+  await page.click('#tab-appearance');
+  await page.click('#btn-splash-toggle');
+  check('关闭开屏已落盘', (await readState()).settings.splashEnabled === false);
+  check('开关显示为关', (await page.locator('#btn-splash-toggle').getAttribute('aria-checked')) === 'false');
+  await page.click('#btn-close-settings');
+  await allowSplash(page); // 有白名单但开关关闭 → 仍不播放
+  await page.reload({ waitUntil: 'domcontentloaded' });
+  check('关闭后不再开屏', await page.locator('#splash-overlay').isHidden());
+  await blockSplash(page); // 恢复默认屏蔽，避免影响后续用例
 
   // ---------- 9e. 自定义悬停提示与字号缩放 ----------
   // 悬停出现自定义气泡，原生 title 属性已从元素上移除

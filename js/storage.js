@@ -26,6 +26,11 @@ export const FONT_SCALE_MAX = 1.6;
 export const DEFAULT_FONT_SCALE = 1;
 
 /** 字号归一化：非法回退默认，超出范围收敛到边界，按 5% 步进取整 */
+/** 开屏动画开关：仅显式 false 为关；旧数据缺字段按“开”处理（出厂默认开） */
+function normalizeSplashEnabled(value) {
+  return value !== false;
+}
+
 export function normalizeFontScale(value, fallback = DEFAULT_FONT_SCALE) {
   if (value === '' || value == null) return fallback;
   const n = Number(value);
@@ -51,6 +56,7 @@ export function defaultState() {
       background: null,
       profile: defaultProfile(),
       splash: null,
+      splashEnabled: true, // 开屏动画总开关；出厂默认开（自定义视频优先，否则播内置默认视频）
       fontScale: DEFAULT_FONT_SCALE,
       pet: normalizePet(null),
     },
@@ -119,6 +125,12 @@ export function setSplash(state, meta) {
   const splash = normalizeSplash(meta);
   state.settings = { ...(state.settings || {}), splash };
   return splash;
+}
+
+/** 开/关开屏动画（仅显式 false 为关），返回生效后的取值 */
+export function setSplashEnabled(state, enabled) {
+  state.settings = { ...(state.settings || {}), splashEnabled: enabled !== false };
+  return state.settings.splashEnabled;
 }
 
 /** 设置字号缩放（0.8~1.6）；返回生效后的值 */
@@ -284,6 +296,7 @@ function normalizeState(s) {
       background: normalizeBackground(s.settings && s.settings.background),
       profile: normalizeProfile(s.settings && s.settings.profile),
       splash: normalizeSplash(s.settings && s.settings.splash),
+      splashEnabled: normalizeSplashEnabled(s.settings && s.settings.splashEnabled),
       fontScale: normalizeFontScale(s.settings && s.settings.fontScale),
       pet: normalizePet(s.settings && s.settings.pet),
     },
