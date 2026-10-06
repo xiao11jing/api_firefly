@@ -19,6 +19,11 @@ test('流程覆盖：自检 → 依赖 → 测试 → 打包 → 产物校验', 
   assert.ok(script.includes('node scripts/vendor-tauri.mjs'), '刷新 vendor');
   assert.ok(script.includes('npm test'), '跑单元测试');
   assert.ok(script.includes('playwright-core install chromium'), '缺浏览器时自动安装 chromium');
+  assert.ok(
+    script.includes("['msedge', 'chrome', 'chromium']"),
+    '探测链必须与 e2e 一致且不含 headless-shell 兜底'
+  );
+  assert.ok(!script.includes("'chromium', null"), '不允许兜底到 headless shell（文件名断言会挂）');
   assert.ok(script.includes('node tests/e2e.mjs'), '跑 E2E');
   assert.ok(script.includes('npm run tauri:build'), '调用 Tauri 打包');
 });

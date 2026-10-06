@@ -92,29 +92,36 @@ if (!health || health.version !== MOCK_VERSION) {
   process.exit(1);
 }
 
-// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次 msedge → chrome → chromium → 自带兜底。
-// 注意 channel 'chromium' = 完整版 Chrome for Testing 的新无头模式——旧 headless shell 对
-// blob 下载的 a.download 文件名不透传（suggestedFilename 会退回 'download'，曾导致两项导出
-// 文件名断言失败）。chromiumSandbox 关闭：测试只访问本机，且 proot/容器里沙箱起不来。
+// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次 msedge → chrome → chromium。
+// 不允许兜底到 chromium-headless-shell：旧无头引擎不把 a.download 文件名透传给下载管理器
+// （suggestedFilename 会退回字面量 'download'，两项导出文件名断言必挂）。channel 'chromium'
+// = 完整版 Chrome for Testing 的新无头模式，与 msedge 行为一致。
+// chromiumSandbox 关闭：测试只访问本机，且 proot/容器里沙箱起不来。
 async function launchBrowser() {
-  const tries = process.env.E2E_CHANNEL
-    ? [process.env.E2E_CHANNEL === 'default' ? null : process.env.E2E_CHANNEL]
-    : ['msedge', 'chrome', 'chromium', null];
+  const forced = process.env.E2E_CHANNEL;
+  const tries = forced ? [forced === 'default' ? null : forced] : ['msedge', 'chrome', 'chromium'];
   let lastErr = null;
   for (const channel of tries) {
     try {
-      return await chromium.launch({
+      const browser = await chromium.launch({
         ...(channel ? { channel } : {}),
         headless: true,
         chromiumSandbox: false,
       });
+      console.log(
+        `E2E 浏览器：channel=${channel || '默认(headless-shell)'}，version=${browser.version()}`
+      );
+      if (!channel) {
+        console.log('警告：正在使用 headless shell 引擎，导出文件名类断言可能不可靠');
+      }
+      return browser;
     } catch (e) {
       lastErr = e;
     }
   }
   console.error(
     '无法启动 E2E 浏览器。先执行： npx playwright-core install chromium' +
-      '（仍缺共享库时再执行 npx playwright-core install-deps chromium）'
+      '（装完整版 chromium，不要只装 headless shell；缺共享库时再执行 npx playwright-core install-deps chromium）'
   );
   throw lastErr;
 }
