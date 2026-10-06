@@ -31,7 +31,8 @@ test('classifyFile：MIME 缺失时按扩展名兜底', () => {
   assert.equal(classifyFile({ name: '脚本.py', type: '' }), 'text');
   assert.equal(classifyFile({ name: 'report.PDF', type: '' }), 'pdf');
   assert.equal(classifyFile({ name: 'app.exe', type: '' }), null);
-  assert.equal(classifyFile({ name: 'doc.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), null);
+  assert.equal(classifyFile({ name: 'doc.docx', type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' }), 'docx');
+  assert.equal(classifyFile({ name: '文档.DOCX', type: '' }), 'docx');
   assert.equal(classifyFile({}), null);
 });
 

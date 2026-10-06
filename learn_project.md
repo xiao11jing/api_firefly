@@ -301,12 +301,18 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 > 测试：learn-materials 4 项 + learn 块解析 7 项 + store 移除 1 项；E2E 新增 9d
 > （归档/筛选/quiz→verdict/复盘落盘与计划推进/跨会话插入），**单测 279、E2E 305 全绿**。
 
-### Phase 5 — 文件格式扩展
+### Phase 5 — 文件格式扩展 ✅ 已完成
 
-1. `extractText` 统一接口 + `.html` / `.css` / `.js` / `.py` 提取器
-2. `.docx`（mammoth）视需要排入
-3. 测试：每格式一个提取器单测（含 HTML 去 script/style、代码文件原样保留）
-   **验收**：新增格式全部有测试覆盖
+> 交付：**`js/extract-text.js` 统一提取接口**——`extractText(name, raw, {parser})` 按扩展名路由：
+> html/htm 走 DOMParser 提取可见正文（先补块级换行 → 移除 script/style/noscript/template → tidyLines；
+> 解析器缺失或抛错回退 `extractHtmlTextByRegex`，含 head/注释剥离与实体解码），其余文本类（含 css/js/py）原样保留；
+> `extractDocxText(source, mammoth)` 同时传 arrayBuffer/buffer 入参，兼容浏览器与 node 两版 mammoth。
+> **.docx**：classifyFile 识别（MIME/扩展名）→ main 懒加载 `js/vendor/mammoth/mammoth.browser.min.js`
+> （405KB，npm devDependency mammoth 提供）→ 与 pdf.js 相同的失败重试语义；accept 列表补 docx；
+> `materialKindOf` 增加 docx 类型。夹具 `tests/fixtures/sample.docx`（make-sample-docx.py 生成）。
+> 测试：`tests/extract-text.test.mjs` 9 项（含 HTML 双路径、parser 契约与回退、docx 中英文）+
+> attachments/learn-materials 断言更新；E2E 新增 9e（HTML/Word 字数、可见正文、去脚本样式、
+> Word 中英文正文、未关联会话不归档），**单测 288、E2E 312 全绿**。
 
 ### Phase 6 — 文件夹绑定（随 v2.0 / Tauri）
 

@@ -34,6 +34,12 @@ export function classifyFile({ name = '', type = '' } = {}) {
   if (mime.startsWith('image/')) return 'image';
   if (mime === 'application/pdf') return 'pdf';
   if (fileExtension(name) === 'pdf') return 'pdf';
+  if (
+    mime === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' ||
+    fileExtension(name) === 'docx'
+  ) {
+    return 'docx';
+  }
   if (mime.startsWith('text/')) return 'text';
   if (mime === 'application/json' || mime === 'application/xml') return 'text';
   if (TEXT_EXTENSIONS.has(fileExtension(name))) return 'text';

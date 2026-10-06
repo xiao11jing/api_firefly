@@ -15,6 +15,7 @@ import {
   toMessageParts,
 } from './attachments.js';
 import { extractPdfText } from './pdf-text.js';
+import { extractDocxText, extractText } from './extract-text.js';
 import {
   BG_JPEG_QUALITY,
   BG_MAX_DIM,
@@ -2523,6 +2524,41 @@ async function readPdfText(file) {
   return { text, pages };
 }
 
+let mammothPromise = null;
+
+/** 懒加载 mammoth（浏览器 UMD 构建，仅首次添加 Word 文档时注入） */
+function loadMammoth() {
+  if (!mammothPromise) {
+    mammothPromise = new Promise((resolve, reject) => {
+      const script = document.createElement('script');
+      script.src = new URL('./vendor/mammoth/mammoth.browser.min.js', import.meta.url).href;
+      script.onload = () => {
+        const impl = window.mammoth;
+        if (impl && typeof impl.extractRawText === 'function') resolve(impl);
+        else {
+          mammothPromise = null;
+          reject(new Error('Word 解析库加载异常'));
+        }
+      };
+      script.onerror = () => {
+        mammothPromise = null; // 允许下次重试
+        reject(new Error('Word 解析库加载失败'));
+      };
+      document.head.appendChild(script);
+    });
+  }
+  return mammothPromise;
+}
+
+async function readDocxText(file) {
+  const mammoth = await loadMammoth();
+  const { text } = await extractDocxText(await file.arrayBuffer(), mammoth);
+  if (!text.trim()) {
+    toast(`${file.name} 未提取到文本（可能是空白或图片型文档）`, 'error');
+  }
+  return text;
+}
+
 /** 解析单个文件；解析期间的占位项在完成后就地替换 */
 async function loadAttachment(file) {
   const kind = classifyFile(file);
@@ -2538,8 +2574,14 @@ async function loadAttachment(file) {
     } else if (kind === 'pdf') {
       const { text, pages } = await readPdfText(file);
       loaded = makeDocAttachment({ name: file.name, text, pages, size: file.size });
+    } else if (kind === 'docx') {
+      const text = await readDocxText(file);
+      loaded = makeDocAttachment({ name: file.name, text, size: file.size });
     } else {
-      loaded = makeDocAttachment({ name: file.name, text: await readAsText(file), size: file.size });
+      // 文本类：统一提取入口（HTML 提取可见正文，其余原样保留）
+      const raw = await readAsText(file);
+      const { text } = extractText(file.name, raw, { parser: window.DOMParser });
+      loaded = makeDocAttachment({ name: file.name, text, size: file.size });
     }
     replaceAttachment(id, { ...loaded, id });
   } catch (e) {

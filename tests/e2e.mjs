@@ -33,6 +33,13 @@ writeFileSync(JSON_PATH, JSON.stringify({ ok: true, items: [1, 2, 3] }, null, 2)
 const EXE_PATH = join(OUT, 'binary.exe');
 writeFileSync(EXE_PATH, 'not really an exe');
 const PDF_PATH = join(import.meta.dirname, 'fixtures', 'sample.pdf');
+const DOCX_PATH = join(import.meta.dirname, 'fixtures', 'sample.docx');
+const HTML_PATH = join(OUT, 'page.html');
+writeFileSync(
+  HTML_PATH,
+  '<html><head><title>不应出现的标题</title></head><body><h1>HTML可见标题</h1><p>这是可见正文段落。</p><script>secretAlert()</script><style>.x{color:red}</style></body></html>',
+  'utf8'
+);
 
 // 开屏视频夹具：仓库里已有则直接用，否则用浏览器 MediaRecorder 现场录一段 webm
 const SPLASH_PATH = join(import.meta.dirname, 'fixtures', 'splash.webm');
@@ -1519,6 +1526,63 @@ try {
   check('资料插入进附件栏（正文随文件恢复）', insertChip.includes('notes.md'), insertChip.slice(0, 60));
   await page.click('#btn-attach-clear');
   check('清空后附件栏收起', await page.locator('#attach-bar').isHidden());
+
+  // ---------- 9e. Phase5 新格式：HTML 正文提取与 Word 解析（未关联主题，不触发归档） ----------
+  // 上一步的空会话仍关联着主题（且没发过消息）：先断开，直接复用它
+  await page.click('#btn-pill-learn');
+  await page.locator('#learn-menu:not(.hidden)').waitFor();
+  await page.locator('#learn-menu .menu-item', { hasText: '不关联' }).click();
+  await page.waitForTimeout(200);
+  const unlinked = await page.evaluate(() => {
+    const s = JSON.parse(localStorage.getItem('ai-multi-chat-v1'));
+    const ses = s.sessions.find((x) => x.id === s.activeSessionId);
+    return { link: ses.learnTopicId || null, msgs: ses.messages.length };
+  });
+  check('新格式场景使用空且未关联的会话', unlinked.link === null && unlinked.msgs === 0, JSON.stringify(unlinked));
+  await page.setInputFiles('#file-input', [HTML_PATH, DOCX_PATH]);
+  await page.waitForFunction(
+    () => document.querySelectorAll('.attach-chip').length === 2 &&
+      document.querySelectorAll('.attach-chip.loading').length === 0,
+    null,
+    { timeout: 15000 }
+  );
+  const fmtSubs = await page.locator('.attach-chip .chip-sub').allTextContents();
+  check('HTML 与 Word 均解析出字数', fmtSubs.length === 2 && fmtSubs.every((s) => /字/.test(s)), fmtSubs.join(' | '));
+  await page.fill('#input', '读一下这两个新格式文件');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => [...document.querySelectorAll('.msg.assistant .prose')].some((el) => el.textContent.includes('模拟回复')),
+    { timeout: 15000 }
+  );
+  await page.waitForSelector('.msg.user .doc-part', { timeout: 5000 });
+  const fmtNames = await page.locator('.msg.user .doc-part .doc-name').allTextContents();
+  check(
+    '文档气泡含 HTML 与 Word 文件名',
+    fmtNames.some((n) => n.includes('page.html')) && fmtNames.some((n) => n.includes('sample.docx')),
+    fmtNames.join(' | ')
+  );
+  await page.locator('.msg.user .doc-part').nth(0).locator('summary').click();
+  const htmlText = await page.locator('.msg.user .doc-part .doc-text').nth(0).textContent();
+  check('HTML 提取可见正文', htmlText.includes('HTML可见标题') && htmlText.includes('这是可见正文段落。'), htmlText.slice(0, 50));
+  check('HTML 已去掉脚本与样式', !htmlText.includes('secretAlert') && !htmlText.includes('color:red'));
+  await page.locator('.msg.user .doc-part').nth(0).locator('summary').click();
+  await page.locator('.msg.user .doc-part').nth(1).locator('summary').click();
+  const docxText = await page.locator('.msg.user .doc-part .doc-text').nth(1).textContent();
+  check(
+    'Word 提取中英文正文',
+    docxText.includes('MiMo Attachment Fixture') && docxText.includes('中文文档测试'),
+    docxText.slice(0, 50)
+  );
+  await page.screenshot({ path: join(OUT, '27-new-formats.png') });
+
+  // 新格式会话未关联主题 → 资料库不受影响（Transformer 的归档仍是 1 份）
+  const cleanTopics = await page.evaluate(() => JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1')));
+  const transformer = cleanTopics.topics.find((t) => t.name === 'Transformer 学习');
+  check(
+    '未关联会话不产生归档',
+    !!transformer && transformer.materials.length === 1 && transformer.materials[0].name === 'notes.md',
+    JSON.stringify(transformer && transformer.materials.map((m) => m.name))
+  );
 
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));

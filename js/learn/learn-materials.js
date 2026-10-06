@@ -19,6 +19,7 @@ export function materialKindOf(name) {
   const ext = fileExtension(name);
   if (ext === 'pdf') return 'pdf';
   if (ext === 'html' || ext === 'htm') return 'html';
+  if (ext === 'docx') return 'docx';
   if (CODE_EXTENSIONS.has(ext)) return 'code';
   return 'text';
 }

@@ -13,6 +13,7 @@ test('materialKindOf：按扩展名分类', () => {
   assert.equal(materialKindOf('data.json'), 'text');
   assert.equal(materialKindOf('paper.pdf'), 'pdf');
   assert.equal(materialKindOf('page.html'), 'html');
+  assert.equal(materialKindOf('报告.docx'), 'docx');
   assert.equal(materialKindOf('app.js'), 'code');
   assert.equal(materialKindOf('script.py'), 'code');
   assert.equal(materialKindOf('style.css'), 'code');
