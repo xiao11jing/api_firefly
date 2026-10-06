@@ -1,0 +1,6 @@
+{
+  "identifier": "default",
+  "description": "主窗口默认能力：核心 IPC（后续 T4/T6 再按需追加 fs / dialog 权限）",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

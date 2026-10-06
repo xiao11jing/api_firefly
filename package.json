@@ -7,9 +7,13 @@
   "scripts": {
     "start": "node tests/static-server.mjs",
     "test": "node --test \"tests/*.test.mjs\"",
-    "mock": "node tests/mock-server.mjs"
+    "mock": "node tests/mock-server.mjs",
+    "dist": "node scripts/build-frontend.mjs",
+    "tauri:dev": "node scripts/build-frontend.mjs && tauri dev",
+    "tauri:build": "node scripts/build-frontend.mjs && tauri build"
   },
   "devDependencies": {
+    "@tauri-apps/cli": "^2.0.0",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "^6.3.289",
     "playwright-core": "^1.63.0"

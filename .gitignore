@@ -2,3 +2,6 @@ node_modules/
 output/
 *.log
 .playwright-cli/
+dist/
+src-tauri/target/
+src-tauri/gen/
