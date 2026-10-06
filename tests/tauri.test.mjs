@@ -54,12 +54,28 @@ test('Cargo.toml：包名、版本、Tauri 2 依赖', () => {
 });
 
 test('main.rs：Linux 下默认关闭 WebKit 沙箱并启动 Builder', () => {
-  const main = read('src-tauri/main.rs');
+  const main = read('src-tauri/src/main.rs');
   assert.ok(main.includes('WEBKIT_FORCE_SANDBOX'), 'proot 环境需要默认关闭沙箱');
   assert.ok(main.includes('std::env::set_var'), '应在运行前注入环境变量');
   assert.ok(main.includes('tauri::Builder'));
   assert.ok(main.includes('tauri::generate_context!'));
   assert.ok(read('src-tauri/build.rs').includes('tauri_build::build()'));
+});
+
+test('Cargo 目标布局：main.rs 必须在 cargo 默认路径 src-tauri/src/ 下', () => {
+  // 回归：曾把 main.rs 误放在 src-tauri/main.rs，测试读同一错误路径全程绿、
+  // cargo build 却报 "no targets specified" —— 测试与 cargo 必须校验同一位置。
+  assert.ok(
+    existsSync(path.join(root, 'src-tauri', 'src', 'main.rs')),
+    '缺少 cargo 默认目标 src-tauri/src/main.rs'
+  );
+  const cargo = read('src-tauri/Cargo.toml');
+  assert.ok(!cargo.includes('[[bin]]'), '未自定义 [[bin]]，目标必须走默认 src/main.rs');
+  assert.ok(existsSync(path.join(root, 'src-tauri', 'build.rs')));
+  assert.ok(
+    !existsSync(path.join(root, 'src-tauri', 'main.rs')),
+    'src-tauri/main.rs 是错误位置，存在即说明放错'
+  );
 });
 
 test('capability：core:default + 应用数据目录范围内的 fs 权限', () => {
@@ -88,13 +104,13 @@ test('capability：core:default + 应用数据目录范围内的 fs 权限', () 
   }
   const cargo = read('src-tauri/Cargo.toml');
   assert.match(cargo, /tauri-plugin-fs = "2"/);
-  assert.ok(read('src-tauri/main.rs').includes('tauri_plugin_fs::init()'));
+  assert.ok(read('src-tauri/src/main.rs').includes('tauri_plugin_fs::init()'));
 });
 
 test('本地请求通道：plugin-http 注册、URL scope 与 vendor', () => {
   const cargo = read('src-tauri/Cargo.toml');
   assert.match(cargo, /tauri-plugin-http = "2"/);
-  assert.ok(read('src-tauri/main.rs').includes('tauri_plugin_http::init()'));
+  assert.ok(read('src-tauri/src/main.rs').includes('tauri_plugin_http::init()'));
   const cap = JSON.parse(read('src-tauri/capabilities/default.json'));
   const http = cap.permissions.find((p) => typeof p === 'object' && p.identifier === 'http:default');
   assert.ok(http, '缺少 http:default 权限（plugin-http 强制 scope）');
@@ -118,7 +134,7 @@ test('本地请求通道：plugin-http 注册、URL scope 与 vendor', () => {
 test('工作区授权：dialog 插件 + allow_vault_dir 运行时 scope', () => {
   const cargo = read('src-tauri/Cargo.toml');
   assert.match(cargo, /tauri-plugin-dialog = "2"/);
-  const main = read('src-tauri/main.rs');
+  const main = read('src-tauri/src/main.rs');
   assert.ok(main.includes('tauri_plugin_dialog::init()'), '注册 dialog 插件');
   assert.ok(main.includes('fn allow_vault_dir'), '自定义运行时授权命令');
   assert.ok(main.includes('allow_directory'), '调用 fs scope 动态授权');
