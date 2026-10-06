@@ -1,6 +1,6 @@
 # Learn 模式计划书（learn_project.md）
 
-> 状态：规划中（未实现）
+> 状态：Phase 1–5 已完成；Phase 6 并入桌面版（Tauri / `.deb` / Ubuntu ARM64）交付
 > 对应产品：AI 多模型对话客户端（见 `project.md`）
 > 参考：Cyrene-Agent 的 Learn 模式（Obsidian Vault 工作区 / 分层提示词 / 静默进度）
 > 制定日期：2026-10-05
@@ -43,7 +43,8 @@
 4. **计划是文件、面板是渲染**：计划以 Markdown 结构持久化（语义等同 `learn/plan.md`），用户可导出查看/手改；app 只负责读出来画成面板。
 5. **模式 = 提示词分层**：常驻规则 / 教学人格 / 模式策略三层拆开，按模式注入，共享能力层不变。
 6. **总结落盘**：默认写入练习/复盘区并更新进度，导出 Markdown 兜底。
-7. **数据先存本地、预留文件夹接口**：本期全部走本地存储（localStorage / IndexedDB），存储层抽象成接口；将来 Tauri 或 File System Access 绑定真实 Vault 时只换实现，上层不改（与 `provider.js` 适配层同一思路）。
+7. **数据先存本地、预留文件夹接口**：本期全部走本地存储（localStorage / IndexedDB），存储层抽象成接口；将来 Tauri 或 File System Access 绑定真实 Vault 时只换实现，上层不改（与 `provider.js` 适配层同一思路）。桌面版交付后，会话与学习状态改落本地文件夹（FileStore），Learn 数据随 FolderStore 进入真实目录。
+8. **AI 写文件逐次确认（已确认的决策）**：FolderStore 落地后，AI 对本地文件的每一次写入或修改都必须在 UI 中向用户展示预览、经用户**逐次确认**后才落盘；目标路径必须落在授权目录与可写子目录内，任何越权路径（`..` 穿越、绝对路径逃逸、保留目录）一律拒绝。
 
 ### 2.1 明确不做（非目标）
 
@@ -117,6 +118,10 @@
 | 导出 | 下载 Markdown（复用 `export.js` 的下载路径） | 用户可手改、可进 Obsidian |
 
 容量保护：单文件提取文本设上限（建议 200KB，超出截断并标注），资料库条目数设软上限并提示清理。
+
+> 桌面版（v2.0）增补：最终目标形态是桌面应用，会话/设置/学习状态改存本地文件夹（FileStore），
+> 资料与复盘大文本随 FolderStore 进真实目录；下表的 localStorage / IndexedDB 实现作为网页开发载体保留，
+> 接口边界见 §4.4，`createLearnStore` 仍是唯一入口。
 
 ### 4.2 Schema（v1）
 
@@ -314,13 +319,17 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 > attachments/learn-materials 断言更新；E2E 新增 9e（HTML/Word 字数、可见正文、去脚本样式、
 > Word 中英文正文、未关联会话不归档），**单测 288、E2E 312 全绿**。
 
-### Phase 6 — 文件夹绑定（随 v2.0 / Tauri）
+### Phase 6 — 文件夹绑定（并入桌面版 / Tauri `.deb` 交付）⏳ 进行中
 
-1. `FolderStore` 实现：File System Access API（网页 Chromium）或 Tauri FS（exe 版）
+1. `FolderStore` 实现：Tauri FS 为主（网页 Chromium 的 File System Access API 留作备选）
 2. contentHash 乐观锁、目录路径限制、`.obsidian/` 等保留目录不写
-3. 本地存储 → 文件夹的一次性迁移与双向只读预览
-4. 测试：路径越权拒绝、冲突写入拒绝、迁移幂等
-   **验收**：与 `project.md` M4（Tauri 打包）合并验收
+3. **用户授权**：通过系统目录对话框选定 Vault；读 scope = 整个 Vault（只读），
+   写 scope = 仅 AI 产出子目录（`notes/` `exercises/` `learn/`），且每次写入/修改
+   都在 UI 预览并经用户逐次确认（§2 决策 8）
+4. 会话/设置/媒体数据同步迁移到本地文件夹（FileStore，接 `storage.js` 参数注入点），
+   本地存储 → 文件夹的迁移幂等
+5. 测试：路径越权拒绝、逐次确认流程、迁移幂等
+   **验收**：与 `project.md` §8 桌面版验收（Tauri 打包 `.deb`）合并验收
 
 ---
 
@@ -354,4 +363,4 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 |---|---|
 | Phase 1–4 | v1.x（M3 之后的独立功能线，不阻塞 M4） |
 | Phase 5 | v1.x 后期 |
-| Phase 6 | v2.0 / M4（Tauri + 内置代理）合并 |
+| Phase 6 | v2.0 / M4（Tauri 打包 `.deb` + 内置代理 + 数据落本地文件夹）合并交付 |
