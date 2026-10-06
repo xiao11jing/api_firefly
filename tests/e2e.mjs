@@ -92,12 +92,14 @@ if (!health || health.version !== MOCK_VERSION) {
   process.exit(1);
 }
 
-// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次尝试 msedge → chrome → playwright 自带 chromium。
-// chromiumSandbox 关闭：测试只访问本机服务，且 proot/容器里 chromium 沙箱起不来。
+// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次 msedge → chrome → chromium → 自带兜底。
+// 注意 channel 'chromium' = 完整版 Chrome for Testing 的新无头模式——旧 headless shell 对
+// blob 下载的 a.download 文件名不透传（suggestedFilename 会退回 'download'，曾导致两项导出
+// 文件名断言失败）。chromiumSandbox 关闭：测试只访问本机，且 proot/容器里沙箱起不来。
 async function launchBrowser() {
   const tries = process.env.E2E_CHANNEL
     ? [process.env.E2E_CHANNEL === 'default' ? null : process.env.E2E_CHANNEL]
-    : ['msedge', 'chrome', null];
+    : ['msedge', 'chrome', 'chromium', null];
   let lastErr = null;
   for (const channel of tries) {
     try {

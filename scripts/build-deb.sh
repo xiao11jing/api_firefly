@@ -32,7 +32,7 @@ echo "-- 确保 E2E 浏览器可用（一次性） --"
 if ! node -e "
 const { chromium } = require('playwright-core');
 (async () => {
-  for (const channel of ['msedge', 'chrome', null]) {
+  for (const channel of ['msedge', 'chrome', 'chromium', null]) {
     try {
       const b = await chromium.launch({
         ...(channel ? { channel } : {}),
