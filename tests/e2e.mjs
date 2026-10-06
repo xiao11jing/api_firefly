@@ -92,7 +92,31 @@ if (!health || health.version !== MOCK_VERSION) {
   process.exit(1);
 }
 
-const browser = await chromium.launch({ channel: 'msedge', headless: true });
+// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次尝试 msedge → chrome → playwright 自带 chromium。
+// chromiumSandbox 关闭：测试只访问本机服务，且 proot/容器里 chromium 沙箱起不来。
+async function launchBrowser() {
+  const tries = process.env.E2E_CHANNEL
+    ? [process.env.E2E_CHANNEL === 'default' ? null : process.env.E2E_CHANNEL]
+    : ['msedge', 'chrome', null];
+  let lastErr = null;
+  for (const channel of tries) {
+    try {
+      return await chromium.launch({
+        ...(channel ? { channel } : {}),
+        headless: true,
+        chromiumSandbox: false,
+      });
+    } catch (e) {
+      lastErr = e;
+    }
+  }
+  console.error(
+    '无法启动 E2E 浏览器。先执行： npx playwright-core install chromium' +
+      '（仍缺共享库时再执行 npx playwright-core install-deps chromium）'
+  );
+  throw lastErr;
+}
+const browser = await launchBrowser();
 // 显式创建 context（而非 browser.newPage 的隐式 context），后续才能 context.newPage() 复用同一份存储
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, acceptDownloads: true });
 const page = await context.newPage();

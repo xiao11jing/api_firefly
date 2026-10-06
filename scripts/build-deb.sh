@@ -28,6 +28,31 @@ node scripts/vendor-tauri.mjs
 echo "== 4/6 全量测试（单测 + E2E） =="
 npm test
 
+echo "-- 确保 E2E 浏览器可用（一次性） --"
+if ! node -e "
+const { chromium } = require('playwright-core');
+(async () => {
+  for (const channel of ['msedge', 'chrome', null]) {
+    try {
+      const b = await chromium.launch({
+        ...(channel ? { channel } : {}),
+        headless: true,
+        chromiumSandbox: false,
+      });
+      await b.close();
+      process.exit(0);
+    } catch {}
+  }
+  process.exit(1);
+})();
+" 2>/dev/null; then
+  echo "未检测到可用浏览器，安装 playwright 自带 chromium（一次性，约 150MB）…"
+  npx playwright-core install chromium || {
+    echo "chromium 安装失败；若报共享库缺失，先执行： npx playwright-core install-deps chromium" >&2
+    exit 1
+  }
+fi
+
 mkdir -p output
 STATIC_LOG="output/build-static.log"
 MOCK_LOG="output/build-mock.log"

@@ -18,6 +18,7 @@ test('流程覆盖：自检 → 依赖 → 测试 → 打包 → 产物校验', 
   assert.ok(script.includes('npm install'), '安装依赖');
   assert.ok(script.includes('node scripts/vendor-tauri.mjs'), '刷新 vendor');
   assert.ok(script.includes('npm test'), '跑单元测试');
+  assert.ok(script.includes('playwright-core install chromium'), '缺浏览器时自动安装 chromium');
   assert.ok(script.includes('node tests/e2e.mjs'), '跑 E2E');
   assert.ok(script.includes('npm run tauri:build'), '调用 Tauri 打包');
 });

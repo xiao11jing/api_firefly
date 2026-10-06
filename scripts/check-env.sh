@@ -122,6 +122,15 @@ if command -v df >/dev/null 2>&1; then
   fi
 fi
 
+# 10. E2E 浏览器（msedge / chrome / playwright 自带 chromium，三选一即可）
+if [ -x /opt/microsoft/msedge/msedge ] || command -v microsoft-edge >/dev/null 2>&1 \
+  || command -v google-chrome >/dev/null 2>&1 || command -v chromium >/dev/null 2>&1 \
+  || [ -d "$HOME/.cache/ms-playwright" ]; then
+  ok "E2E 浏览器可用（msedge/chrome/chromium 或 playwright 缓存）"
+else
+  note "未检测到 E2E 浏览器——build-deb.sh 会自动执行 npx playwright-core install chromium"
+fi
+
 echo "== 结果：PASS $pass / FAIL $fail / WARN $warn =="
 if [ "$fail" -gt 0 ]; then
   echo "存在 FAIL 项，环境不满足构建条件；请按提示处理后重跑本脚本。"

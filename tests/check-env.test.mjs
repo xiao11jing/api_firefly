@@ -38,3 +38,9 @@ test('有汇总与退出码语义（FAIL 时 exit 1）', () => {
   assert.ok(script.includes('exit 1'));
   assert.ok(script.includes('exit 0'));
 });
+
+test('E2E 浏览器探测（缺失时 WARN 并由构建脚本自动装）', () => {
+  assert.ok(script.includes('msedge') || script.includes('playwright'), '应探测浏览器');
+  assert.ok(script.includes('playwright-core install chromium'), '应指引自动安装命令');
+  assert.ok(script.includes('note '), '浏览器缺失只 WARN 不阻塞');
+});
