@@ -15,6 +15,7 @@ fn main() {
     }
 
     tauri::Builder::default()
+        .plugin(tauri_plugin_fs::init()) // FileStore 落盘（仅应用数据目录，见 capabilities）
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

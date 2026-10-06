@@ -1,6 +1,17 @@
 {
   "identifier": "default",
-  "description": "主窗口默认能力：核心 IPC（后续 T4/T6 再按需追加 fs / dialog 权限）",
+  "description": "主窗口默认能力：核心 IPC + 应用数据目录内的文件读写（FileStore 落盘，scope 限 $APPDATA/**）",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    { "identifier": "fs:allow-mkdir", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-exists", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-read-dir", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-read-text-file", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-write-text-file", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-read-file", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-write-file", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-remove", "allow": [{ "path": "$APPDATA/**" }] },
+    { "identifier": "fs:allow-rename", "allow": [{ "path": "$APPDATA/**" }] }
+  ]
 }

@@ -1017,6 +1017,17 @@ try {
   const defaultSplashShown = await page.locator('#splash-overlay').isVisible();
   check('未配置时播出厂开屏', defaultSplashShown);
   if (defaultSplashShown) {
+    // bootSplash 在异步取完自定义视频（此处为空）后才写入 src，需等待而不是立即读
+    await page
+      .waitForFunction(
+        () => {
+          const v = document.querySelector('#splash-video');
+          return v && (v.getAttribute('src') || '').includes('assets/defaults/splash.mp4');
+        },
+        null,
+        { timeout: 5000 }
+      )
+      .catch(() => {});
     const defSrc = await page.locator('#splash-video').getAttribute('src');
     check('出厂开屏使用内置视频', (defSrc || '').includes('assets/defaults/splash.mp4'), defSrc);
     await page.click('#btn-splash-skip');

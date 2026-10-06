@@ -26,6 +26,16 @@
     }
   </script>
   <link rel="stylesheet" href="css/style.css">
+  <!-- 桌面版（Tauri）文件存储用的裸说明符映射；网页版不会加载这些模块 -->
+  <script type="importmap">
+    {
+      "imports": {
+        "@tauri-apps/api/core": "./js/vendor/tauri/api/core.js",
+        "@tauri-apps/api/path": "./js/vendor/tauri/api/path.js",
+        "@tauri-apps/plugin-fs": "./js/vendor/tauri/plugin-fs/index.js"
+      }
+    }
+  </script>
 </head>
 <body>
 

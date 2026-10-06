@@ -62,11 +62,53 @@ test('main.rs：Linux 下默认关闭 WebKit 沙箱并启动 Builder', () => {
   assert.ok(read('src-tauri/build.rs').includes('tauri_build::build()'));
 });
 
-test('capability 仅授权 main 窗口 core:default', () => {
+test('capability：core:default + 应用数据目录范围内的 fs 权限', () => {
   const cap = JSON.parse(read('src-tauri/capabilities/default.json'));
   assert.equal(cap.identifier, 'default');
   assert.deepEqual(cap.windows, ['main']);
-  assert.deepEqual(cap.permissions, ['core:default']);
+  assert.ok(cap.permissions.includes('core:default'));
+  const fsPerms = cap.permissions.filter((p) => typeof p === 'object');
+  assert.ok(fsPerms.length >= 9, '文件存储所需的 fs 权限都要在列');
+  const ids = fsPerms.map((p) => p.identifier);
+  for (const need of [
+    'fs:allow-mkdir',
+    'fs:allow-exists',
+    'fs:allow-read-dir',
+    'fs:allow-read-text-file',
+    'fs:allow-write-text-file',
+    'fs:allow-read-file',
+    'fs:allow-write-file',
+    'fs:allow-remove',
+    'fs:allow-rename',
+  ]) {
+    assert.ok(ids.includes(need), `缺少 ${need}`);
+  }
+  for (const p of fsPerms) {
+    assert.deepEqual(p.allow, [{ path: '$APPDATA/**' }], `${p.identifier} 必须限定在 $APPDATA 内`);
+  }
+  const cargo = read('src-tauri/Cargo.toml');
+  assert.match(cargo, /tauri-plugin-fs = "2"/);
+  assert.ok(read('src-tauri/main.rs').includes('tauri_plugin_fs::init()'));
+});
+
+test('vendor：官方 ESM 已拷贝且 import map 指向它们', () => {
+  const files = [
+    'js/vendor/tauri/api/core.js',
+    'js/vendor/tauri/api/path.js',
+    'js/vendor/tauri/api/external/tslib/tslib.es6.js',
+    'js/vendor/tauri/plugin-fs/index.js',
+  ];
+  for (const rel of files) {
+    const p = path.join(root, rel);
+    assert.ok(existsSync(p) && statSync(p).size > 1000, `缺少 vendor 文件 ${rel}`);
+  }
+  const fsJs = readFileSync(path.join(root, 'js/vendor/tauri/plugin-fs/index.js'), 'utf8');
+  assert.ok(fsJs.includes('plugin:fs|write_text_file'), 'vendor 的 plugin-fs 应包含二进制写入命令');
+  const html = read('index.html');
+  assert.ok(html.includes('"@tauri-apps/plugin-fs": "./js/vendor/tauri/plugin-fs/index.js"'));
+  assert.ok(html.includes('"@tauri-apps/api/core": "./js/vendor/tauri/api/core.js"'));
+  assert.ok(html.includes('<script type="importmap">'));
+  assert.ok(pkg.devDependencies['@tauri-apps/api'] && pkg.devDependencies['@tauri-apps/plugin-fs']);
 });
 
 test('npm scripts 提供 dist / tauri:dev / tauri:build', () => {

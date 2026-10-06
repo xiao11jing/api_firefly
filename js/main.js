@@ -29,6 +29,7 @@ import {
 } from './background.js';
 import { AVATAR_MAX_DATA_URL_CHARS, AVATAR_MAX_DIM, avatarInitial } from './profile.js';
 import { MAX_SPLASH_BYTES, createSplashStore, validateSplashFile } from './splash.js';
+import { createFileStore, createFileSplashStore, isDesktop } from './file-store.js';
 import {
   DEFAULT_SPLASH_SRC,
   effectiveAvatarSrc,
@@ -76,16 +77,37 @@ const $ = (sel) => document.querySelector(sel);
 const hljs = window.hljs || null;
 
 /** @type {ReturnType<typeof store.defaultState>} */
-let state = store.loadState(window.localStorage);
-const splashStore = createSplashStore(window.indexedDB);
+// 桌面版（Tauri）：状态/媒体/学习数据落本地文件夹（FileStore）；
+// 网页版与自动化测试继续 localStorage / IndexedDB。初始化失败自动回退，保证界面可用。
+let fileStore = null;
+if (isDesktop()) {
+  try {
+    fileStore = await createFileStore();
+    fileStore.onError = (err) => {
+      console.error('本地保存失败', err);
+      if (storageWarned) return;
+      storageWarned = true;
+      toast('本地保存失败，本次改动未写入本地文件', 'error');
+    };
+  } catch (err) {
+    console.error('文件存储初始化失败，回退浏览器存储', err);
+    fileStore = null;
+  }
+}
+const storage = fileStore || window.localStorage;
+let state = store.loadState(storage);
+const splashStore = fileStore ? createFileSplashStore(fileStore) : createSplashStore(window.indexedDB);
 let attachments = []; // 待发送附件：{ id, kind, name, size, dataUrl? | text? }
 let attachSeq = 0;
 let readingAttachments = 0; // 正在解析（PDF/文本读取）中的附件数
 let controllers = []; // 当前生成中的各分支中断器
 let streaming = false;
 
-// Learn 学习主题（存储层在 init 里异步加载）
-const learnStore = createLearnStore('local');
+// Learn 学习主题（存储层在 init 里异步加载；桌面版大文本走 FileStore 的 kv）
+const learnStore = createLearnStore(
+  'local',
+  fileStore ? { localStorage: fileStore, kv: fileStore.kv } : {}
+);
 let learnState = null;
 let editingLearnTopicId = null;
 
@@ -109,7 +131,7 @@ let storageWarned = false;
  */
 function persist() {
   try {
-    store.saveState(window.localStorage, state);
+    store.saveState(storage, state);
     storageWarned = false;
   } catch (e) {
     console.error('本地保存失败', e);
@@ -3395,7 +3417,15 @@ function dismissSplash() {
  */
 async function bootSplash() {
   const overlay = $('#splash-overlay');
-  if (!overlay || overlay.hidden) return;
+  if (!overlay) return;
+  if (overlay.hidden && fileStore) {
+    // 桌面版状态在本地文件里，内联脚本（读 localStorage）判定不到——由这里补判定
+    if (splashEnabledOf(state.settings) && !sessionStorage.getItem('splashPlayed')) {
+      sessionStorage.setItem('splashPlayed', '1');
+      overlay.hidden = false;
+    }
+  }
+  if (overlay.hidden) return;
   if (!splashEnabledOf(state.settings)) {
     dismissSplash();
     return;
