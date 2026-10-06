@@ -350,3 +350,12 @@ test('ä½œç­”ä¸é—®é¢˜çŠ¶æ€å˜åŒ–åæ˜ åˆ°å¯¼å‡ºçš„è¿›åº¦æ–‡ä»¶', async () => {
   assert.ok(md.includes('åˆ¤å¯¹ 1 Â· åˆ¤é”™ 0ï¼ˆ100% Â· AI åˆ¤å®šï¼‰'));
   assert.ok(md.includes('- [ ] æ–°çš„å›°æƒ‘'));
 });
+
+
+test('removeMaterial É¾³ıÕıÎÄ£¬loadMaterial ·µ»Ø null', async () => {
+  const store = makeStore();
+  const meta = await store.saveMaterial({ id: 'm-del', name: 'a.txt', kind: 'text' }, 'ÕıÎÄÄÚÈİ');
+  assert.equal(await store.loadMaterial(meta.id), 'ÕıÎÄÄÚÈİ');
+  await store.removeMaterial(meta.id);
+  assert.equal(await store.loadMaterial(meta.id), null);
+});

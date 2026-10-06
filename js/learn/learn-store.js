@@ -358,6 +358,12 @@ export function createLearnStore(kind = 'local', deps = {}) {
       return typeof value === 'string' ? value : null;
     },
 
+    /** 删除资料正文（条目本身由调用方从 topic.materials 移除） */
+    async removeMaterial(id) {
+      if (!kv || typeof kv.del !== 'function') return;
+      await Promise.resolve(kv.del(`material:${id}`));
+    },
+
     async saveReview(id, body) {
       const key = str(id);
       if (!key) throw new LearnStoreError('invalid', '复盘 id 不能为空');

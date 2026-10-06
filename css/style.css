@@ -2258,3 +2258,79 @@ html.is-welcome .messages {
   line-height: 1.7;
 }
 .empty-state.welcome .primary-btn { margin-top: 10px; }
+
+/* ---------- 学习进度抽屉：资料库 / 复盘 / 结束学习 ---------- */
+.ld-filter {
+  width: 100%;
+  padding: 7px 11px;
+  margin-bottom: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  font-family: inherit;
+  font-size: 13px;
+  outline: none;
+  transition: border-color 0.15s;
+}
+.ld-filter:focus { border-color: var(--accent); }
+.ld-filter::placeholder { color: var(--faint); }
+.ld-mat-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  margin-bottom: 6px;
+}
+.ld-mat-main {
+  flex: 1;
+  min-width: 0;
+}
+.ld-mat-name {
+  display: block;
+  font-size: 13px;
+  color: var(--ink);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ld-mat-sub {
+  display: block;
+  font-size: 11px;
+  color: var(--faint);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ld-mini-btn {
+  flex: none;
+  font-size: 12px;
+  padding: 3px 9px;
+  border-radius: 8px;
+  border: 1px solid var(--border-strong);
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
+}
+.ld-mini-btn:hover { color: var(--ink); background: var(--bg); }
+.ld-mini-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.ld-rev-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 13px;
+  color: var(--ink);
+  padding: 7px 2px;
+  border-bottom: 1px dashed var(--border);
+}
+.ld-rev-row:last-child { border-bottom: none; }
+.ld-rev-time {
+  flex: none;
+  font-size: 11.5px;
+  color: var(--faint);
+}

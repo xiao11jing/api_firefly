@@ -1402,6 +1402,124 @@ try {
   const backSys = (backReq.messages || []).find((m) => m.role === 'system');
   check('切回 Learn 后恢复注入', !!backSys && backSys.content.includes('Learn 模式常驻规则'));
 
+  // ---------- 9d. Phase4：资料归档/跨会话插入、出题判定、结束学习复盘 ----------
+  // 发送文档 → 自动归档进当前主题（Transformer 学习）
+  await page.setInputFiles('#file-input', MD_PATH);
+  await page.locator('#attach-bar:not(.hidden)').waitFor({ timeout: 5000 });
+  await page.fill('#input', '把这份文档归档到资料库');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => {
+      const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+      const t = (ls.topics || []).find((x) => x.id === ls.activeTopicId);
+      return !!t && t.materials.length === 1;
+    },
+    { timeout: 15000 }
+  );
+  const matMeta = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const t = ls.topics.find((x) => x.id === ls.activeTopicId);
+    return t.materials[0];
+  });
+  check(
+    '发出的文档自动归档到主题',
+    matMeta.name === 'notes.md' && matMeta.kind === 'text',
+    JSON.stringify(matMeta)
+  );
+  check('抽屉资料区出现条目', (await page.locator('#learn-drawer .ld-mat-row').count()) === 1);
+  check('归档后附件栏清空', await page.locator('#attach-bar').isHidden());
+
+  // 资料筛选
+  await page.fill('#learn-drawer .ld-filter', 'notes');
+  check('筛选命中保留条目', (await page.locator('#learn-drawer .ld-mat-row').count()) === 1);
+  await page.fill('#learn-drawer .ld-filter', '不存在的文件');
+  check('无匹配显示提示', (await page.locator('#learn-drawer .ld-mat-list .ld-none').textContent()).includes('没有匹配'));
+  await page.fill('#learn-drawer .ld-filter', '');
+
+  // 出题 → 作答判定
+  await page.fill('#input', '请出一道练习题');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => {
+      const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+      const t = (ls.topics || []).find((x) => x.id === ls.activeTopicId);
+      return !!t && t.quizzes.length === 1;
+    },
+    { timeout: 15000 }
+  );
+  const quiz0 = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const t = ls.topics.find((x) => x.id === ls.activeTopicId);
+    return t.quizzes[0];
+  });
+  check(
+    '练习批次录入且初始未判定',
+    quiz0.entries.length === 1 && quiz0.entries[0].verdict === 'unresolved' && quiz0.entries[0].question.includes('Q、K、V'),
+    JSON.stringify(quiz0.entries.map((e) => e.verdict))
+  );
+  check('未判定不计入正确率', (await page.locator('#learn-drawer .ld-acc-value').textContent()).includes('暂无'));
+
+  await page.fill('#input', '答：查询、键、值');
+  await page.click('#btn-send');
+  await page.waitForFunction(
+    () => {
+      const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+      const t = (ls.topics || []).find((x) => x.id === ls.activeTopicId);
+      return !!t && t.quizzes[0] && t.quizzes[0].entries[0].verdict === 'right';
+    },
+    { timeout: 15000 }
+  );
+  const verdictEntry = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const t = ls.topics.find((x) => x.id === ls.activeTopicId);
+    return t.quizzes[0].entries[0];
+  });
+  check('判定登记为 right 且带作答原文', verdictEntry.userAnswer === '答：查询、键、值', verdictEntry.userAnswer);
+  await page.waitForTimeout(200);
+  check('抽屉正确率显示 100%', (await page.locator('#learn-drawer .ld-acc-value').textContent()).includes('100'));
+  check('正确率口径注明 AI 判定', (await page.locator('#learn-drawer .ld-acc-note').textContent()).includes('AI 判定'));
+
+  // 结束本次学习 → 复盘落盘 + 计划推进
+  await page.click('#btn-learn-finish');
+  await page.waitForFunction(
+    () => {
+      const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+      const t = (ls.topics || []).find((x) => x.id === ls.activeTopicId);
+      return !!t && t.reviews.length === 1;
+    },
+    { timeout: 15000 }
+  );
+  const reviewState = await page.evaluate(() => {
+    const ls = JSON.parse(localStorage.getItem('ai-multi-chat-learn-v1'));
+    const t = ls.topics.find((x) => x.id === ls.activeTopicId);
+    return { review: t.reviews[0], items: t.plan.items.map((i) => i.status) };
+  });
+  check('复盘已落盘', reviewState.review.title === '注意力机制学习复盘', JSON.stringify(reviewState.review));
+  check('复盘 advance 推进计划一格', reviewState.items[1] === 'done' && reviewState.items[2] === 'doing', reviewState.items.join(','));
+  check('对话中发出结束学习请求', (await page.locator('.msg.user .bubble').last().textContent()).includes('结束本次学习'));
+  check('抽屉复盘记录出现', (await page.locator('#learn-drawer .ld-rev-row').count()) === 1 &&
+    (await page.locator('#learn-drawer .ld-rev-row').first().textContent()).includes('注意力机制学习复盘'));
+
+  // 跨会话：新会话关联同主题 → 资料仍可见 → 插入对话
+  await page.click('#btn-new-chat');
+  await page.waitForTimeout(200);
+  check('新会话抽屉显示未关联空态', (await page.locator('#learn-drawer .ld-empty').textContent()).includes('未关联学习主题'));
+  await page.click('#btn-pill-learn');
+  await page.locator('#learn-menu:not(.hidden)').waitFor();
+  await page.locator('#learn-menu .menu-item', { hasText: 'Transformer 学习' }).click();
+  await page.waitForTimeout(250);
+  check(
+    '新会话关联后资料跨会话可见',
+    (await page.locator('#learn-drawer .ld-mat-row').count()) === 1 &&
+      (await page.locator('#learn-drawer .ld-mat-name').first().textContent()) === 'notes.md'
+  );
+  await page.locator('#learn-drawer .ld-mat-row .ld-mini-btn', { hasText: '插入' }).click();
+  await page.locator('#attach-bar:not(.hidden)').waitFor({ timeout: 5000 });
+  const insertChip = await page.locator('.attach-chip').first().textContent();
+  check('资料插入进附件栏（正文随文件恢复）', insertChip.includes('notes.md'), insertChip.slice(0, 60));
+  await page.click('#btn-attach-clear');
+  check('清空后附件栏收起', await page.locator('#attach-bar').isHidden());
+
   // ---------- 10. 控制台无异常 ----------
   check('无页面 JS 异常', pageErrors.length === 0, pageErrors.join(' | '));
   const realConsoleErrors = consoleErrors.filter(

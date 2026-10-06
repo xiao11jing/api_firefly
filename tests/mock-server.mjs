@@ -8,7 +8,7 @@
 import http from 'node:http';
 
 /** 改动 mock 行为时递增，E2E 会据此提示「需要重启 mock 服务」 */
-export const MOCK_VERSION = '3';
+export const MOCK_VERSION = '4';
 
 const PORT = Number(process.env.MOCK_PORT || 8717);
 
@@ -50,11 +50,54 @@ function planSample() {
   ];
 }
 
+/** 「结束本次学习」→ ```review 块；出题 → ```quiz；以「答：」开头 → ```verdict */
+function reviewSample() {
+  const body = [
+    '## 本轮要点',
+    '- Self-Attention 的核心是加权聚合上下文',
+    '',
+    '## 待加强',
+    '- 多头注意力的拼接细节',
+    '',
+    '## 下一步',
+    '- 继续 Multi-Head Attention',
+  ].join('\\n');
+  return [
+    '好的，这是本次学习的复盘：\n\n',
+    '```review\n',
+    `{"title": "注意力机制学习复盘", "body": "${body}", "advance": true, "resolved": []}\n`,
+    '```\n\n',
+    '下次可以从 Multi-Head 继续。',
+  ];
+}
+
+function quizSample() {
+  return [
+    '出一道练习题：\n\n',
+    '```quiz\n',
+    '[{"q": "多头注意力中 Q、K、V 分别是什么的缩写？"}]\n',
+    '```\n\n',
+    '先自己想一想再回答。',
+  ];
+}
+
+function verdictSample() {
+  return [
+    '回答正确！\n\n',
+    '```verdict\n',
+    '[{"i": 0, "v": "right"}]\n',
+    '```\n\n',
+    'Q = Query（查询）、K = Key（键）、V = Value（值）。',
+  ];
+}
+
 function replyFor(parsed) {
-  const wantsPlan = (parsed.messages || []).some(
-    (m) => m.role === 'user' && typeof m.content === 'string' && PLAN_CUE.test(m.content)
-  );
-  if (wantsPlan) return planSample();
+  const lastUser = [...(parsed.messages || [])].reverse().find((m) => m.role === 'user');
+  const userText = typeof lastUser?.content === 'string' ? lastUser.content : '';
+  if (userText.includes('结束本次学习')) return reviewSample();
+  if (/(?:出一?道|来一?道).{0,4}(?:练习|题)|出题/.test(userText)) return quizSample();
+  if (/^答[：:]/.test(userText)) return verdictSample();
+  if (PLAN_CUE.test(userText)) return planSample();
   return sampleFor(parsed.model);
 }
 

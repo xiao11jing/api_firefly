@@ -3,6 +3,7 @@
  */
 import { uid } from '../storage.js';
 import { ITEM_STATUS } from './learn-store.js';
+import { recordQuiz, resolveByQuiz, resolveQuestion } from './learn-quiz.js';
 
 /** 开场访谈最多问几个问题 */
 export const INTERVIEW_MAX_QUESTIONS = 3;
@@ -168,4 +169,160 @@ export function parsePlanItems(text) {
     if (items.length >= PLAN_MAX_ITEMS) break;
   }
   return items.length ? items : null;
+}
+
+
+/* ---------------- �� AI �Ľṹ��Լ����quiz / verdict / review ---------------- */
+
+/** ������ϰ������༸�⣨����ʾ�����Լ��һ�£� */
+export const MAX_QUIZ_PER_BATCH = 3;
+
+function matchFence(text, lang) {
+  const re = new RegExp('```' + lang + '\\s*\\n?([\\s\\S]*?)```', 'i');
+  return String(text || '').match(re);
+}
+
+/** ���� ```quiz �� �� [{ q }]������Ч��Ŀ���� null */
+export function parseQuizBlock(text) {
+  const fence = matchFence(text, 'quiz');
+  if (!fence) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(fence[1].trim());
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const items = [];
+  for (const raw of parsed) {
+    const q = typeof raw === 'string' ? raw : raw && (raw.q || raw.question);
+    const clean = String(q || '').trim();
+    if (!clean) continue;
+    items.push({ q: clean.slice(0, 300) });
+    if (items.length >= MAX_QUIZ_PER_BATCH) break;
+  }
+  return items.length ? items : null;
+}
+
+/** ���� ```verdict �� �� [{ i, v }]�����˷Ƿ��� */
+export function parseVerdictBlock(text) {
+  const fence = matchFence(text, 'verdict');
+  if (!fence) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(fence[1].trim());
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(parsed)) return null;
+  const out = [];
+  for (const raw of parsed) {
+    if (!raw || typeof raw !== 'object') continue;
+    const i = Number(raw.i);
+    const v = raw.v;
+    if (!Number.isInteger(i) || i < 0) continue;
+    if (v !== 'right' && v !== 'wrong') continue;
+    out.push({ i, v });
+  }
+  return out.length ? out : null;
+}
+
+/** ���� ```review �� �� { title, body, advance, resolved }�����Ϸ����� null */
+export function parseReviewBlock(text) {
+  const fence = matchFence(text, 'review');
+  if (!fence) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(fence[1].trim());
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+  const title = String(parsed.title || '').trim().slice(0, 80);
+  if (!title) return null;
+  const body = String(parsed.body == null ? '' : parsed.body);
+  const resolved = Array.isArray(parsed.resolved)
+    ? parsed.resolved.map((x) => String(x || '').trim()).filter(Boolean).slice(0, 10)
+    : [];
+  return { title, body, advance: parsed.advance === true, resolved };
+}
+
+/** �ظ���� ```quiz �� �� ¼��һ��δ�ж����Σ�������ǰ�ƻ���Ŀ�����޿鷵�� null */
+export function recordQuizFromReply(topic, text, { at = Date.now(), itemRef } = {}) {
+  const items = parseQuizBlock(text);
+  if (!items) return null;
+  const ref =
+    itemRef !== undefined ? itemRef : (currentItem(topic) && currentItem(topic).id) || null;
+  return recordQuiz(topic, {
+    at,
+    itemRef: ref,
+    entries: items.map((item) => ({
+      question: item.q,
+      verdict: 'unresolved',
+      userAnswer: '',
+      at,
+    })),
+  });
+}
+
+/**
+ * �ظ���� ```verdict �� �� �Ǽǵ����һ����δ�ж�������Ρ�
+ * userAnswer ȡ�û����ֻظ�ԭ�ģ�ȫ�� right ���й�����Ŀʱ���������������⡣
+ * @returns {number} �Ǽǳɹ�������
+ */
+export function applyVerdicts(topic, text, { userAnswer = '', at = Date.now() } = {}) {
+  const verdicts = parseVerdictBlock(text);
+  if (!verdicts) return 0;
+  const quiz = [...topic.quizzes].reverse().find((q) =>
+    (q.entries || []).some((e) => e.verdict === 'unresolved')
+  );
+  if (!quiz) return 0;
+  let changed = 0;
+  for (const v of verdicts) {
+    const entry = quiz.entries[v.i];
+    if (!entry || entry.verdict !== 'unresolved') continue;
+    entry.verdict = v.v;
+    entry.userAnswer = String(userAnswer || '').slice(0, 500);
+    entry.at = at;
+    changed += 1;
+  }
+  if (changed) {
+    topic.updatedAt = at;
+    if (quiz.itemRef) resolveByQuiz(topic, { itemRef: quiz.itemRef, at });
+  }
+  return changed;
+}
+
+/**
+ * �ظ���� ```review �� �� ���̽ṹ�������ģ��ɵ��÷� saveReview �־û�����
+ * �޿鷵�� null��
+ */
+export function buildReviewFromReply(topic, text, { at = Date.now() } = {}) {
+  const parsed = parseReviewBlock(text);
+  if (!parsed) return null;
+  const id = uid();
+  return { id, at, title: parsed.title, body: parsed.body, bodyRef: id, advance: parsed.advance, resolved: parsed.resolved };
+}
+
+/**
+ * �Ѹ���д�����⣺reviews ׷�� + �� advance �ƽ��ƻ� + �� resolved �������⡣
+ * @returns {{advanced: boolean, resolvedCount: number}}
+ */
+export function applyReview(topic, review, { at = Date.now() } = {}) {
+  topic.reviews = [
+    ...(topic.reviews || []),
+    { id: review.id, at: review.at, title: review.title, bodyRef: review.bodyRef },
+  ];
+  let advanced = false;
+  if (review.advance && topic.mode === 'plan') advanced = !!advancePlan(topic, at);
+  let resolvedCount = 0;
+  for (const text of review.resolved || []) {
+    const q = (topic.questions || []).find((x) => x.status === 'open' && x.text === text);
+    if (q) {
+      resolveQuestion(topic, q.id, { by: 'user', at });
+      resolvedCount += 1;
+    }
+  }
+  topic.updatedAt = at;
+  return { advanced, resolvedCount };
 }

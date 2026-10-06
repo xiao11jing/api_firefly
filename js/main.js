@@ -48,11 +48,20 @@ import { createLearnStore, createTopic } from './learn/learn-store.js';
 import { assembleLearnSystem } from './learn/learn-prompts.js';
 import { buildPanelModel } from './learn/learn-panel.js';
 import {
+  buildMaterialMeta,
+  canInsertMaterial,
+  findMaterials,
+} from './learn/learn-materials.js';
+import {
   advancePlan,
   applyProfile,
+  applyReview,
+  applyVerdicts,
+  buildReviewFromReply,
   detectAdvanceCue,
   markItemStatus,
   parsePlanItems,
+  recordQuizFromReply,
   setPlanItems,
 } from './learn/learn.js';
 
@@ -716,6 +725,7 @@ function renderMessages({ keepScroll = false } = {}) {
   document.documentElement.classList.toggle('is-welcome', isEmpty);
   renderSessionTools(session);
   renderContextRing();
+  if (learnDrawerOpen()) renderLearnDrawer(); // 切换会话/模式时抽屉内容跟随
   if (isEmpty) {
     renderEmptyState();
     $('#topbar-title').textContent = session ? session.title : '新会话';
@@ -843,6 +853,12 @@ async function send() {
   const content = [];
   if (text) content.push({ type: 'text', text });
   content.push(...toMessageParts(attachments));
+
+  // 归档：Learn 会话发出的附件持久进主题资料库（跨会话可检索、可重新插入）
+  const archiveTopic = sessionTopic(session);
+  if (archiveTopic && attachments.length) {
+    await archiveAttachments(archiveTopic, attachments);
+  }
 
   store.addMessage(state, session.id, { role: 'user', content });
   $('#input').value = '';
@@ -1001,7 +1017,10 @@ async function runBranch({ session, spec, controller, started }) {
     // 单模型回复里出现 ```plan 块 → 解析为当前会话学习主题的计划（仅 Learn 模式）
     if (!spec.message.batchId) {
       const topic = sessionTopic(s);
-      if (topic && s.uiMode === 'learn') applyPlanFromReply(topic, full);
+      if (topic && s.uiMode === 'learn') {
+        applyPlanFromReply(topic, full);
+        await applyLearnBlocks(s, topic, full);
+      }
     }
   }
   persist();
@@ -1669,6 +1688,70 @@ function renderLearnDrawer() {
     for (const q of model.questions) qSec.appendChild(ldP('ld-q', q.text));
   }
   body.appendChild(qSec);
+
+  // 资料库（跨会话）
+  const matSec = ldSection(`资料库（${topic.materials.length}）`);
+  const filter = document.createElement('input');
+  filter.className = 'ld-filter';
+  filter.type = 'text';
+  filter.placeholder = '按文件名或摘要筛选';
+  filter.setAttribute('aria-label', '筛选资料');
+  matSec.appendChild(filter);
+  const matList = document.createElement('div');
+  matList.className = 'ld-mat-list';
+  matSec.appendChild(matList);
+  const renderMatList = () => {
+    matList.innerHTML = '';
+    const items = findMaterials(topic, filter.value);
+    if (!items.length) {
+      matList.appendChild(
+        ldP(
+          'ld-none',
+          topic.materials.length
+            ? '没有匹配的资料'
+            : '暂无归档资料；Learn 会话中发送的附件会自动归档到本主题。'
+        )
+      );
+      return;
+    }
+    for (const m of items) matList.appendChild(renderMaterialRow(topic, m));
+  };
+  filter.addEventListener('input', renderMatList);
+  renderMatList();
+  body.appendChild(matSec);
+
+  // 复盘记录
+  const revSec = ldSection(`复盘记录（${topic.reviews.length}）`);
+  if (!topic.reviews.length) {
+    revSec.appendChild(ldP('ld-none', '暂无；点下方「结束本次学习」让 AI 生成并归档。'));
+  } else {
+    for (const r of [...topic.reviews].sort((a, b) => b.at - a.at)) {
+      const row = document.createElement('div');
+      row.className = 'ld-rev-row';
+      const t = document.createElement('span');
+      t.textContent = r.title;
+      const time = document.createElement('span');
+      time.className = 'ld-rev-time';
+      time.textContent = formatTime(r.at);
+      row.append(t, time);
+      revSec.appendChild(row);
+    }
+  }
+  body.appendChild(revSec);
+
+  // 结束本次学习
+  const endSec = ldSection('结束本次学习');
+  endSec.appendChild(
+    ldP('ld-none', '让 AI 总结本轮要点并写入复盘记录，按需推进计划、消解已解决的问题。')
+  );
+  const finish = document.createElement('button');
+  finish.type = 'button';
+  finish.className = 'ghost-btn block';
+  finish.id = 'btn-learn-finish';
+  finish.textContent = '结束本次学习 · 生成复盘';
+  finish.addEventListener('click', finishLearningSession);
+  endSec.appendChild(finish);
+  body.appendChild(endSec);
 }
 
 /** 导出学习工作区：多文件按路径分节合并为一个 Markdown 下载 */
@@ -1694,6 +1777,156 @@ async function exportLearnWorkspace() {
   } catch (e) {
     toast(`导出失败：${(e && e.message) || e}`, 'error');
   }
+}
+
+// ---------- Learn Phase4：资料归档、结构化块落盘、复盘 ----------
+
+/** 把本轮附件归档进主题资料库（文档存提取文本，图片仅元数据） */
+async function archiveAttachments(topic, list) {
+  let archived = 0;
+  for (const a of list) {
+    const meta = buildMaterialMeta(a, Date.now());
+    if (a.kind === 'file') {
+      const saved = await learnStore.saveMaterial(meta, typeof a.text === 'string' ? a.text : '');
+      topic.materials.push(saved);
+    } else {
+      topic.materials.push(meta);
+    }
+    archived += 1;
+  }
+  if (!archived) return;
+  topic.updatedAt = Date.now();
+  await persistLearn();
+  toast(`已归档 ${archived} 份资料到「${topic.name}」`);
+}
+
+/** 解析回复里的 quiz / verdict / review 块并落盘（顺序：判定 → 出题 → 复盘） */
+async function applyLearnBlocks(session, topic, full) {
+  const now = Date.now();
+  let dirty = false;
+
+  const lastUser = [...session.messages].reverse().find((m) => m.role === 'user');
+  const userAnswer = lastUser
+    ? (lastUser.content || [])
+        .filter((p) => p.type === 'text')
+        .map((p) => p.text)
+        .join('')
+    : '';
+  if (applyVerdicts(topic, full, { userAnswer, at: now })) {
+    dirty = true;
+    toast('已登记练习判定');
+  }
+
+  const quiz = recordQuizFromReply(topic, full, { at: now });
+  if (quiz) {
+    dirty = true;
+    toast(`已登记 ${quiz.entries.length} 道练习题`);
+  }
+
+  const review = buildReviewFromReply(topic, full, { at: now });
+  if (review) {
+    dirty = true;
+    const { advanced, resolvedCount } = applyReview(topic, review, { at: now });
+    try {
+      await learnStore.saveReview(review.id, review.body);
+    } catch (e) {
+      toast(`复盘正文保存失败：${(e && e.message) || e}`, 'error');
+    }
+    const bits = [];
+    if (advanced) bits.push('计划已推进一格');
+    if (resolvedCount) bits.push(`解决 ${resolvedCount} 个问题`);
+    toast(`复盘已保存「${review.title}」${bits.length ? '，' + bits.join('，') : ''}`);
+  }
+
+  if (dirty) await persistLearn();
+}
+
+/** 把资料正文重新放进附件栏（图片没有可复用正文） */
+async function insertMaterial(material) {
+  if (!canInsertMaterial(material)) return;
+  if (isFull(attachments)) {
+    toast(`附件最多 ${MAX_ATTACHMENTS} 个`, 'error');
+    return;
+  }
+  const text = await learnStore.loadMaterial(material.id);
+  if (!text) {
+    toast('资料正文不存在，可能已被清理', 'error');
+    return;
+  }
+  attachments.push({
+    id: nextAttachId(),
+    ...makeDocAttachment({ name: material.name, text, size: material.size }),
+  });
+  renderAttachments();
+  toast(`已插入「${material.name}」，随下一条消息发送`);
+}
+
+/** 从资料库移除（正文与条目一并删除） */
+async function removeMaterialFromTopic(topic, id) {
+  const target = (topic.materials || []).find((m) => m.id === id);
+  topic.materials = (topic.materials || []).filter((m) => m.id !== id);
+  topic.updatedAt = Date.now();
+  try {
+    await learnStore.removeMaterial(id);
+  } catch {
+    /* 正文删除失败不影响条目移除 */
+  }
+  await persistLearn();
+  toast(`已移除「${target ? target.name : '资料'}」`);
+}
+
+/** 结束本次学习：把复盘请求发进对话，由 AI 输出 review 块落盘 */
+function finishLearningSession() {
+  const session = store.getActiveSession(state);
+  const topic = sessionTopic(session);
+  if (!topic || !session.messages.length) {
+    toast('先开始学习再生成复盘', 'error');
+    return;
+  }
+  if (streaming) {
+    toast('正在生成中，请稍候', 'error');
+    return;
+  }
+  $('#input').value = '请根据本次学习生成复盘（结束本次学习）';
+  send();
+}
+
+function renderMaterialRow(topic, material) {
+  const row = document.createElement('div');
+  row.className = 'ld-mat-row';
+
+  const main = document.createElement('span');
+  main.className = 'ld-mat-main';
+  const name = document.createElement('span');
+  name.className = 'ld-mat-name';
+  name.textContent = material.name;
+  main.appendChild(name);
+  const sub = document.createElement('span');
+  sub.className = 'ld-mat-sub';
+  sub.textContent = [
+    material.kind === 'image' ? '图片（仅记录）' : material.kind,
+    material.size ? formatBytes(material.size) : '',
+    material.truncated ? '已截断' : '',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  main.appendChild(sub);
+
+  const ins = document.createElement('button');
+  ins.type = 'button';
+  ins.className = 'ld-mini-btn';
+  ins.textContent = '插入';
+  ins.disabled = !canInsertMaterial(material);
+  ins.addEventListener('click', () => insertMaterial(material));
+
+  const del = document.createElement('button');
+  del.type = 'button';
+  del.className = 'ld-mini-btn';
+  del.textContent = '移除';
+  del.addEventListener('click', () => removeMaterialFromTopic(topic, material.id));
+
+  row.append(main, ins, del);
+  return row;
 }
 
 // ---------- 系统提示（提示词模板） ----------
