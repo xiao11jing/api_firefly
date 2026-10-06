@@ -9,6 +9,8 @@ import {
   filePartToText,
   SSEParser,
   extractDelta,
+  setFetch,
+  streamChat,
 } from '../js/provider.js';
 
 test('joinUrl 处理两侧斜杠', () => {
@@ -198,4 +200,53 @@ test('extractDelta 兼容数组形式 content', () => {
 
 test('extractDelta 非法 JSON 抛出友好错误', () => {
   assert.throws(() => extractDelta('not-json'), /无法解析/);
+});
+
+test('setFetch：streamChat 走注入的本地请求通道', async () => {
+  const calls = [];
+  setFetch(async (url, init) => {
+    calls.push({ url, init });
+    return new Response(JSON.stringify({ choices: [{ delta: { content: '通道OK' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  });
+  try {
+    const r = await streamChat({
+      provider: { baseUrl: 'https://api.example.com/v1', apiKey: 'k' },
+      model: 'm1',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal(r.text, '通道OK');
+    assert.equal(calls.length, 1);
+    assert.ok(calls[0].url.startsWith('https://api.example.com/v1/chat/completions'));
+    assert.equal(calls[0].init.method, 'POST');
+  } finally {
+    setFetch(null); // 恢复默认，避免污染其它用例
+  }
+});
+
+test('setFetch(null) 恢复全局 fetch', async () => {
+  setFetch(null);
+  // 默认通道应指向全局 fetch（这里只验证引用关系，不发真请求）
+  const original = globalThis.fetch;
+  let used = 0;
+  globalThis.fetch = async () => {
+    used++;
+    return new Response(JSON.stringify({ choices: [{ delta: { content: 'x' } }] }), {
+      status: 200,
+      headers: { 'content-type': 'application/json' },
+    });
+  };
+  try {
+    const r = await streamChat({
+      provider: { baseUrl: 'http://127.0.0.1:9/v1' },
+      model: 'm',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal(r.text, 'x');
+    assert.equal(used, 1, '应调用全局 fetch');
+  } finally {
+    globalThis.fetch = original;
+  }
 });

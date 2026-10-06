@@ -16,6 +16,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_fs::init()) // FileStore 落盘（仅应用数据目录，见 capabilities）
+        .plugin(tauri_plugin_http::init()) // 本地请求通道：AI 请求由 Rust 侧发出，绕过 CORS
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }

@@ -16,6 +16,7 @@
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/cli": "^2.0.0",
     "@tauri-apps/plugin-fs": "^2.6.0",
+    "@tauri-apps/plugin-http": "^2.8.0",
     "mammoth": "^1.13.0",
     "pdfjs-dist": "^6.3.289",
     "playwright-core": "^1.63.0"

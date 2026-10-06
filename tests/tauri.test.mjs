@@ -67,7 +67,7 @@ test('capability：core:default + 应用数据目录范围内的 fs 权限', () 
   assert.equal(cap.identifier, 'default');
   assert.deepEqual(cap.windows, ['main']);
   assert.ok(cap.permissions.includes('core:default'));
-  const fsPerms = cap.permissions.filter((p) => typeof p === 'object');
+  const fsPerms = cap.permissions.filter((p) => typeof p === 'object' && p.identifier.startsWith('fs:'));
   assert.ok(fsPerms.length >= 9, '文件存储所需的 fs 权限都要在列');
   const ids = fsPerms.map((p) => p.identifier);
   for (const need of [
@@ -89,6 +89,30 @@ test('capability：core:default + 应用数据目录范围内的 fs 权限', () 
   const cargo = read('src-tauri/Cargo.toml');
   assert.match(cargo, /tauri-plugin-fs = "2"/);
   assert.ok(read('src-tauri/main.rs').includes('tauri_plugin_fs::init()'));
+});
+
+test('本地请求通道：plugin-http 注册、URL scope 与 vendor', () => {
+  const cargo = read('src-tauri/Cargo.toml');
+  assert.match(cargo, /tauri-plugin-http = "2"/);
+  assert.ok(read('src-tauri/main.rs').includes('tauri_plugin_http::init()'));
+  const cap = JSON.parse(read('src-tauri/capabilities/default.json'));
+  const http = cap.permissions.find((p) => typeof p === 'object' && p.identifier === 'http:default');
+  assert.ok(http, '缺少 http:default 权限（plugin-http 强制 scope）');
+  assert.deepEqual(http.allow, [{ url: 'http://*' }, { url: 'https://*' }], '放行任意 http/https 主机');
+  const vendorPath = path.join(root, 'js/vendor/tauri/plugin-http/index.js');
+  assert.ok(existsSync(vendorPath) && statSync(vendorPath).size > 1000, '缺少 plugin-http vendor');
+  const vendor = readFileSync(vendorPath, 'utf8');
+  assert.ok(vendor.includes('plugin:http|fetch'), 'vendor 应包含 fetch 命令');
+  const html = read('index.html');
+  assert.ok(html.includes('"@tauri-apps/plugin-http": "./js/vendor/tauri/plugin-http/index.js"'));
+  assert.ok(pkg.devDependencies['@tauri-apps/plugin-http']);
+  // 前端注入点：provider 可换通道，main 在桌面环境装配
+  const provider = read('js/provider.js');
+  assert.ok(provider.includes('export function setFetch'));
+  assert.ok(provider.includes('fetchImpl('));
+  const main = read('js/main.js');
+  assert.ok(main.includes("@tauri-apps/plugin-http"), 'main 应动态加载本地请求通道');
+  assert.ok(main.includes('setFetch('));
 });
 
 test('vendor：官方 ESM 已拷贝且 import map 指向它们', () => {

@@ -3,6 +3,16 @@
  * 所有厂商归一为 OpenAI Chat Completions 兼容格式。
  */
 
+/**
+ * 可替换的请求通道：桌面版注入本地代理（tauri-plugin-http，Rust 侧发出、天然无 CORS），
+ * 网页版与测试走全局 fetch。传入非函数则恢复默认。
+ */
+let fetchImpl = (input, init) => globalThis.fetch(input, init);
+
+export function setFetch(fn) {
+  fetchImpl = typeof fn === 'function' ? fn : (input, init) => globalThis.fetch(input, init);
+}
+
 /** 拼接 baseUrl 与路径，容忍两侧多余斜杠 */
 export function joinUrl(base, path) {
   const b = String(base || '').trim().replace(/\/+$/, '');
@@ -237,7 +247,7 @@ export async function streamChat({
 
   let resp;
   try {
-    resp = await fetch(endpoint, {
+    resp = await fetchImpl(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify(body),

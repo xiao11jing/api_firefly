@@ -2,7 +2,7 @@
  * main.js — 界面交互与状态装配
  */
 import * as store from './storage.js';
-import { streamChat, toApiMessage } from './provider.js';
+import { setFetch, streamChat, toApiMessage } from './provider.js';
 import { renderMarkdown } from './markdown.js';
 import {
   MAX_ATTACHMENTS,
@@ -97,6 +97,16 @@ if (isDesktop()) {
 const storage = fileStore || window.localStorage;
 let state = store.loadState(storage);
 const splashStore = fileStore ? createFileSplashStore(fileStore) : createSplashStore(window.indexedDB);
+
+// 桌面版：AI 请求切换到本地请求通道（Rust 侧转发，绕过浏览器 CORS）；失败回退直连
+if (isDesktop()) {
+  try {
+    const { fetch: localFetch } = await import('@tauri-apps/plugin-http');
+    setFetch(localFetch);
+  } catch (err) {
+    console.error('本地请求通道初始化失败，回退浏览器直连', err);
+  }
+}
 let attachments = []; // 待发送附件：{ id, kind, name, size, dataUrl? | text? }
 let attachSeq = 0;
 let readingAttachments = 0; // 正在解析（PDF/文本读取）中的附件数
