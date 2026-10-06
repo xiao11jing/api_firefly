@@ -36,8 +36,10 @@ fi
 
 # 3. Tauri 2 关键依赖：libwebkit2gtk-4.1（Ubuntu 22.04+ / Debian 12+ 才有）
 if command -v apt-cache >/dev/null 2>&1; then
-  if apt-cache policy libwebkit2gtk-4.1-dev 2>/dev/null | grep -q 'Candidate: [0-9]'; then
-    ok "libwebkit2gtk-4.1-dev 可安装（Tauri 构建依赖）"
+  if command -v pkg-config >/dev/null 2>&1 && pkg-config --exists webkit2gtk-4.1; then
+    ok "webkit2gtk-4.1 开发包已安装（pkg-config 可查，可用于构建）"
+  elif apt-cache policy libwebkit2gtk-4.1-dev 2>/dev/null | grep -q 'Candidate: [0-9]'; then
+    bad "webkit2gtk-4.1-dev 未安装但源里有（sudo apt-get install -y libwebkit2gtk-4.1-dev）"
   else
     bad "apt 源中没有 libwebkit2gtk-4.1-dev（Tauri 2 硬依赖；需 Ubuntu 22.04+ 或补源）"
   fi
@@ -73,16 +75,28 @@ else
   bad "未安装 Rust（curl https://sh.rustup.rs -sSf | sh）"
 fi
 
-# 5b. C 工具链与 pkg-config（rustls/ring 与 webkitgtk-sys 构建需要）
+# 5b. C 工具链与 pkg-config（rustls/ring 的 C 依赖与 webkitgtk-sys 构建需要）
+# 必须是功能性检查：只查“cc 存在”会漏掉 libc6-dev 缺失（gcc 在、glibc 头不在），
+# 那种情况 ring 要到第 5 步编译几百个 crate 之后才炸（stdint.h: No such file）。
 if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
-  ok "C 编译器：$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null)"
+  CC_BIN="$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null)"
+  ok "C 编译器：$CC_BIN"
+  probe_c="$(mktemp /tmp/check-env-XXXXXX.c)"
+  probe_bin="${probe_c}.bin"
+  printf '#include <stdint.h>\nint main(void){ uint32_t v = 42; return (int)(v - 42); }\n' >"$probe_c"
+  if "$CC_BIN" -o "$probe_bin" "$probe_c" >/dev/null 2>&1 && [ -x "$probe_bin" ]; then
+    ok "C 工具链功能可用（stdint.h 编译链接通过）"
+  else
+    bad "C 编译功能测试失败（多半缺 libc6-dev：sudo apt-get install -y build-essential）"
+  fi
+  rm -f "$probe_c" "$probe_bin"
 else
-  bad "缺少 C 编译器（apt install build-essential）"
+  bad "缺少 C 编译器（sudo apt-get install -y build-essential）"
 fi
 if command -v pkg-config >/dev/null 2>&1; then
   ok "pkg-config $(pkg-config --version 2>/dev/null)"
 else
-  bad "缺少 pkg-config（apt install pkg-config）"
+  bad "缺少 pkg-config（sudo apt-get install -y pkg-config）"
 fi
 
 # 6. Node.js >= 18（前端测试与 Tauri CLI）
