@@ -6,6 +6,8 @@
  *       GET  /health（返回 MOCK_VERSION，供端到端识别陈旧的常驻进程）
  */
 import http from 'node:http';
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 
 /** 改动 mock 行为时递增，E2E 会据此提示「需要重启 mock 服务」 */
 export const MOCK_VERSION = '4';
@@ -203,7 +205,16 @@ export function createMockServer() {
   });
 }
 
-const isDirectRun = process.argv[1] && import.meta.url === new URL(`file:///${process.argv[1].replace(/\\/g, '/')}`).href;
+const isDirectRun = (() => {
+  if (!process.argv[1]) return false;
+  try {
+    // 两侧都规范化：容忍相对路径与符号链接（Linux 上手工拼 file:/// URL 会误判，
+    // 导致直接运行时静默退出、监听永远起不来）
+    return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+  } catch {
+    return false;
+  }
+})();
 if (isDirectRun) {
   const server = createMockServer();
   server.listen(PORT, '127.0.0.1', () => {
