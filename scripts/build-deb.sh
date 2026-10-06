@@ -128,6 +128,8 @@ if [ -z "$DEB" ] || [ ! -f "$DEB" ]; then
   echo "错误：未找到 .deb 产物（src-tauri/target/**/bundle/deb/*.deb）" >&2
   exit 1
 fi
+# apt 安装本地 deb 只认绝对路径或 ./ 开头，相对路径会被当成软件源里的包名
+DEB="$(realpath "$DEB")"
 
 echo "-- dpkg-deb -I（控制信息） --"
 dpkg-deb -I "$DEB"

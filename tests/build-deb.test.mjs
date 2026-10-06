@@ -45,6 +45,10 @@ test('产物校验：定位 deb 并检查关键内容', () => {
     '出厂默认资源以“嵌入二进制”方式校验（deb 清单里没有独立文件）'
   );
   assert.ok(script.includes('Exec=ai-multi-chat'), '校验 desktop 的 Exec');
+  assert.ok(
+    script.includes('DEB="$(realpath "$DEB")"'),
+    'apt 装本地 deb 必须绝对路径（相对路径会被当包名搜源）'
+  );
   assert.ok(script.includes('exit 1'), '任一校验失败即退出');
 });
 
