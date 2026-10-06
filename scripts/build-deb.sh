@@ -132,16 +132,54 @@ fi
 echo "-- dpkg-deb -I（控制信息） --"
 dpkg-deb -I "$DEB"
 
-echo "-- 关键内容抽查（可执行文件 / 桌面项 / 图标 / 前端资源） --"
+echo "-- 结构与嵌入抽查 --"
+# 注意：dpkg-deb -c 列出的路径没有前导斜杠（usr/bin/... 而非 /usr/bin/...）；
+# 前端 index.html 与 assets/ 由 Tauri 编译进二进制，不会作为独立文件出现在清单里。
+errs=""
 CONTENTS="$(dpkg-deb -c "$DEB")"
-echo "$CONTENTS" | grep -E '/usr/bin/ai-multi-chat' >/dev/null \
-  || { echo "错误：缺少 /usr/bin/ai-multi-chat 可执行文件" >&2; exit 1; }
-echo "$CONTENTS" | grep -E '\.desktop' >/dev/null \
-  || { echo "错误：缺少 .desktop 桌面项" >&2; exit 1; }
-echo "$CONTENTS" | grep -E 'index\.html' >/dev/null \
-  || { echo "错误：缺少前端 index.html" >&2; exit 1; }
-echo "$CONTENTS" | grep -E 'assets/defaults/(avatar\.png|background\.png|splash\.mp4)' >/dev/null \
-  || { echo "错误：缺少出厂默认资源" >&2; exit 1; }
+
+if ! echo "$CONTENTS" | grep -E 'usr/bin/ai-multi-chat$' >/dev/null; then
+  errs="$errs\n  - 缺少 usr/bin/ai-multi-chat 可执行文件"
+fi
+if ! echo "$CONTENTS" | grep -E '\.desktop$' >/dev/null; then
+  errs="$errs\n  - 缺少 .desktop 桌面项"
+fi
+if ! echo "$CONTENTS" | grep -E 'icons/hicolor/.*/apps/ai-multi-chat\.png' >/dev/null; then
+  errs="$errs\n  - 缺少应用图标"
+fi
+
+DEPS="$(dpkg-deb -f "$DEB" Depends 2>/dev/null || true)"
+if ! echo "$DEPS" | grep -q 'libwebkit2gtk-4\.1'; then
+  errs="$errs\n  - Depends 缺少 libwebkit2gtk-4.1（实际：$DEPS）"
+fi
+
+# 解包验证：desktop 的 Exec 与已嵌入二进制的前端出厂默认资源
+tmpdir="$(mktemp -d)"
+if dpkg-deb -x "$DEB" "$tmpdir"; then
+  desktop_file="$(find "$tmpdir/usr/share/applications" -name '*.desktop' 2>/dev/null | head -n 1)"
+  if [ -z "$desktop_file" ] || ! grep -q '^Exec=ai-multi-chat' "$desktop_file"; then
+    errs="$errs\n  - .desktop 的 Exec 不是 ai-multi-chat"
+  fi
+  app_bin="$tmpdir/usr/bin/ai-multi-chat"
+  if [ ! -f "$app_bin" ]; then
+    errs="$errs\n  - 解包后找不到二进制"
+  else
+    for asset in 'assets/defaults/avatar.png' 'assets/defaults/background.png' 'assets/defaults/splash.mp4'; do
+      if ! grep -a -q "$asset" "$app_bin"; then
+        errs="$errs\n  - 二进制未嵌入前端资源：$asset"
+      fi
+    done
+  fi
+else
+  errs="$errs\n  - dpkg-deb -x 解包失败"
+fi
+rm -rf "$tmpdir"
+
+if [ -n "$errs" ]; then
+  printf '错误：产物校验未通过：%b\n' "$errs" >&2
+  exit 1
+fi
+echo "结构校验通过（二进制/桌面项/图标/依赖/嵌入资源）"
 
 if [ "$WITH_INSTALL" = "1" ]; then
   echo "== 附加：安装 .deb（sudo apt-get install，可解析运行依赖） =="

@@ -32,9 +32,19 @@ test('产物校验：定位 deb 并检查关键内容', () => {
   assert.ok(script.includes("find src-tauri/target"), '应从 target 下查找产物');
   assert.ok(script.includes("bundle/deb/*.deb"), 'deb 路径模式');
   assert.ok(script.includes('dpkg-deb -I'), '输出控制信息');
-  assert.ok(script.includes('/usr/bin/ai-multi-chat'), '校验可执行文件');
+  assert.ok(
+    script.includes("grep -E 'usr/bin/ai-multi-chat$'"),
+    '清单路径无前导斜杠（曾误用 /usr/bin 导致假失败）'
+  );
+  assert.ok(!script.includes("grep -E '/usr/bin/ai-multi-chat'"), '不许再带前导斜杠匹配清单');
   assert.ok(script.includes('.desktop'), '校验桌面项');
-  assert.ok(script.includes('assets/defaults/'), '校验出厂默认资源');
+  assert.ok(script.includes('dpkg-deb -f "$DEB" Depends'), '校验 Depends 含 webkit');
+  assert.ok(script.includes('dpkg-deb -x'), '解包做深度校验');
+  assert.ok(
+    script.includes("'assets/defaults/avatar.png'"),
+    '出厂默认资源以“嵌入二进制”方式校验（deb 清单里没有独立文件）'
+  );
+  assert.ok(script.includes('Exec=ai-multi-chat'), '校验 desktop 的 Exec');
   assert.ok(script.includes('exit 1'), '任一校验失败即退出');
 });
 
