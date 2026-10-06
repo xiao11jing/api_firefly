@@ -92,11 +92,10 @@ if (!health || health.version !== MOCK_VERSION) {
   process.exit(1);
 }
 
-// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次 msedge → chrome → chromium。
-// 不允许兜底到 chromium-headless-shell：旧无头引擎不把 a.download 文件名透传给下载管理器
-// （suggestedFilename 会退回字面量 'download'，两项导出文件名断言必挂）。channel 'chromium'
-// = 完整版 Chrome for Testing 的新无头模式，与 msedge 行为一致。
-// chromiumSandbox 关闭：测试只访问本机，且 proot/容器里沙箱起不来。
+// 浏览器选择：E2E_CHANNEL 可强制指定；默认依次 msedge → chrome → chromium（完整版新无头）。
+// 不兜底 headless-shell。文件名断言不读 CDP 的 suggestedFilename：Linux Chromium 对 blob
+// 下载不透传 a.download（suggested 会退回字面量 'download'），改为用 addInitScript 在页面内
+// 捕获应用实际赋给 a.download 的值（应用契约，跨引擎稳定）。
 async function launchBrowser() {
   const forced = process.env.E2E_CHANNEL;
   const tries = forced ? [forced === 'default' ? null : forced] : ['msedge', 'chrome', 'chromium'];
@@ -111,9 +110,6 @@ async function launchBrowser() {
       console.log(
         `E2E 浏览器：channel=${channel || '默认(headless-shell)'}，version=${browser.version()}`
       );
-      if (!channel) {
-        console.log('警告：正在使用 headless shell 引擎，导出文件名类断言可能不可靠');
-      }
       return browser;
     } catch (e) {
       lastErr = e;
@@ -137,6 +133,26 @@ await context.addInitScript(() => {
     if (!localStorage.getItem('e2e-allow-splash')) sessionStorage.setItem('splashPlayed', '1');
   } catch {
     /* 存储不可用时忽略 */
+  }
+});
+// 捕获应用侧 a.download 赋值：Linux Chromium 的 CDP suggestedFilename 对 blob 下载
+// 不透传该属性（退回字面量 'download'），导出文件名断言以应用契约为准、引擎视角仅作日志
+await context.addInitScript(() => {
+  try {
+    const orig = HTMLAnchorElement.prototype.click;
+    HTMLAnchorElement.prototype.click = function () {
+      try {
+        if (typeof this.download === 'string') {
+          window.__dlNameHistory = window.__dlNameHistory || [];
+          window.__dlNameHistory.push(this.download);
+        }
+      } catch {
+        /* 忽略 */
+      }
+      return orig.apply(this, arguments);
+    };
+  } catch {
+    /* 忽略 */
   }
 });
 /** 放开开屏：下一次导航真正播放（清会话标记 + 打开白名单） */
@@ -340,7 +356,12 @@ try {
 
   // ---------- 6b-2. 会话导出 Markdown ----------
   const [download] = await Promise.all([page.waitForEvent('download'), page.click('#btn-export')]);
-  check('导出文件名取会话标题', download.suggestedFilename() === '读一下这些文档.md', download.suggestedFilename());
+  const intendedName = await page.evaluate(() => (window.__dlNameHistory || []).slice(-1)[0] || '');
+  check(
+    '导出文件名取会话标题',
+    intendedName === '读一下这些文档.md',
+    `a.download=${intendedName}，suggested=${download.suggestedFilename()}`
+  );
   const exportedPath = join(OUT, 'exported.md');
   await download.saveAs(exportedPath);
   const exported = readFileSync(exportedPath, 'utf8');
@@ -1478,7 +1499,12 @@ try {
   const dlPromise = page.waitForEvent('download');
   await page.click('#btn-learn-export');
   const dl = await dlPromise;
-  check('导出文件名', dl.suggestedFilename() === 'Transformer 学习-学习工作区.md', dl.suggestedFilename());
+  const intendedLearnName = await page.evaluate(() => (window.__dlNameHistory || []).slice(-1)[0] || '');
+  check(
+    '导出文件名',
+    intendedLearnName === 'Transformer 学习-学习工作区.md',
+    `a.download=${intendedLearnName}，suggested=${dl.suggestedFilename()}`
+  );
   const dlText = readFileSync(await dl.path(), 'utf8');
   check(
     '导出按虚拟目录分节',
