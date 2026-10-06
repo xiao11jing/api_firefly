@@ -32,10 +32,25 @@ test('产物校验：定位 deb 并检查关键内容', () => {
   assert.ok(script.includes('exit 1'), '任一校验失败即退出');
 });
 
-test('E2E 服务管理：复用当前项目服务、拒绝陈旧占用', () => {
+test('E2E 服务管理：日志落盘、轮询就绪、拒绝陈旧占用', () => {
   assert.ok(script.includes('js/defaults.js'), '用新文件探测 8800 是否为当前项目');
   assert.ok(script.includes('不是当前项目'), '陈旧服务要给出明确报错');
   assert.ok(script.includes('trap cleanup EXIT'), '退出时清理后台服务');
+  assert.ok(script.includes('wait_http'), '必须轮询等待就绪，而不是固定 sleep');
+  assert.ok(script.includes('output/build-static.log'), '静态服务日志落盘可排查');
+  assert.ok(script.includes('output/build-mock.log'), 'mock 服务日志落盘可排查');
+  assert.ok(script.includes('tail -n 30'), '启动超时要打印日志尾部');
+  assert.ok(
+    !/static-server\.mjs\s*>\/dev\/null/.test(script),
+    '服务输出不能吞进 /dev/null（上次排障就是被这个坑了）'
+  );
+  assert.ok(!/mock-server\.mjs\s*>\/dev\/null/.test(script));
+  assert.ok(script.includes('http_ok'), 'HTTP 探测统一入口');
+  assert.ok(
+    !script.includes('curl '),
+    '不依赖 curl（构建机不一定有），探测走 node'
+  );
+  assert.ok(script.includes('无需任何后台服务'), '向用户说明最终应用不依赖服务');
 });
 
 test('可选安装入口', () => {
