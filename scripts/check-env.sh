@@ -57,11 +57,32 @@ else
   bad "缺少 dpkg-deb（安装 dpkg 后重试）"
 fi
 
-# 5. Rust 工具链（rustup 安装）
+# 5. Rust 工具链（rustup 安装）；插件要求 rustc ≥ 1.90
 if command -v cargo >/dev/null 2>&1 && command -v rustc >/dev/null 2>&1; then
   ok "Rust：$(rustc --version 2>/dev/null)；$(cargo --version 2>/dev/null)"
+  rust_ver="$(rustc --version 2>/dev/null | awk '{print $2}')"
+  rust_major="${rust_ver%%.*}"
+  rust_rest="${rust_ver#*.}"
+  rust_minor="${rust_rest%%.*}"
+  if [ "$rust_major" -gt 1 ] 2>/dev/null || { [ "$rust_major" -eq 1 ] 2>/dev/null && [ "${rust_minor:-0}" -ge 90 ] 2>/dev/null; }; then
+    ok "Rust 版本满足 ≥ 1.90（tauri-plugin-fs/http 要求）"
+  else
+    bad "Rust ${rust_ver} 过旧（tauri-plugin-fs/http 要求 ≥ 1.90，rustup update 升级）"
+  fi
 else
   bad "未安装 Rust（curl https://sh.rustup.rs -sSf | sh）"
+fi
+
+# 5b. C 工具链与 pkg-config（rustls/ring 与 webkitgtk-sys 构建需要）
+if command -v cc >/dev/null 2>&1 || command -v gcc >/dev/null 2>&1; then
+  ok "C 编译器：$(command -v cc 2>/dev/null || command -v gcc 2>/dev/null)"
+else
+  bad "缺少 C 编译器（apt install build-essential）"
+fi
+if command -v pkg-config >/dev/null 2>&1; then
+  ok "pkg-config $(pkg-config --version 2>/dev/null)"
+else
+  bad "缺少 pkg-config（apt install pkg-config）"
 fi
 
 # 6. Node.js >= 18（前端测试与 Tauri CLI）

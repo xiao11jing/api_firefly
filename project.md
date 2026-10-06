@@ -65,7 +65,7 @@
   - 默认开屏视频：`开屏视频.mp4`
 - **数据落盘**：会话、消息、设置、媒体（背景/开屏）、学习数据存本地文件夹（默认 `~/.local/share/ai-multi-chat/`，可在设置中更改），不再依赖浏览器 localStorage/IndexedDB 配额
 - **内置本地代理**：AI 请求由 Rust 侧本地代理通道发出（tauri-plugin-http），绕过浏览器 CORS，API 密钥不出本机
-- **构建自检**：目标机器上运行 `scripts/check-env.sh` 验证 ARM64/webkit2gtk-4.1/Rust/Node 等构建依赖
+- **构建自检与打包**：目标机器上先跑 `bash scripts/check-env.sh` 验证 ARM64/webkit2gtk-4.1/Rust≥1.90/Node 等构建依赖；`bash scripts/build-deb.sh` 一键完成「测试全绿 → Tauri 打包 → 产物结构校验」，加 `--install` 可直接安装
 
 ## 4. 技术架构（MVP）
 

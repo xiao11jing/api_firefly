@@ -24,6 +24,9 @@ test('覆盖 Tauri 关键依赖检查', () => {
   assert.ok(script.includes('libwebkit2gtk-4.1'), '缺少 webkit2gtk-4.1 检查');
   assert.ok(script.includes('apt-cache'), '应通过 apt-cache 验证源中可用');
   assert.ok(script.includes('cargo') && script.includes('rustc'), '缺少 Rust 工具链检查');
+  assert.ok(script.includes('1.90'), '插件要求 rustc ≥ 1.90，必须校验版本');
+  assert.ok(script.includes('pkg-config'), '缺少 pkg-config 检查');
+  assert.ok(script.includes('build-essential') || script.includes('gcc'), '缺少 C 工具链检查');
   assert.ok(script.includes('dpkg-deb'), '缺少 dpkg-deb 打包工具检查');
   assert.ok(script.includes('node'), '缺少 Node.js 检查');
 });
