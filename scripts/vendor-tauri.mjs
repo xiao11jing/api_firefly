@@ -18,6 +18,7 @@ const FILES = [
   ['api/external/tslib/tslib.es6.js', 'api/external/tslib/tslib.es6.js'],
   ['plugin-fs/dist-js/index.js', 'plugin-fs/index.js'],
   ['plugin-http/dist-js/index.js', 'plugin-http/index.js'],
+  ['plugin-dialog/dist-js/index.js', 'plugin-dialog/index.js'],
 ];
 
 for (const [src, dst] of FILES) {

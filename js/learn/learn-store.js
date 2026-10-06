@@ -38,7 +38,7 @@ export class LearnStoreError extends Error {
  * ------------------------------------------------------------------ */
 
 export function createLearnState() {
-  return { schemaVersion: LEARN_SCHEMA_VERSION, activeTopicId: null, topics: [] };
+  return { schemaVersion: LEARN_SCHEMA_VERSION, activeTopicId: null, topics: [], vaultPath: null };
 }
 
 function numOr(value, fallback) {
@@ -200,7 +200,14 @@ export function normalizeState(raw) {
     typeof raw.activeTopicId === 'string' && topics.some((t) => t.id === raw.activeTopicId)
       ? raw.activeTopicId
       : null;
-  return { schemaVersion: LEARN_SCHEMA_VERSION, activeTopicId: active, topics };
+  return {
+    schemaVersion: LEARN_SCHEMA_VERSION,
+    activeTopicId: active,
+    topics,
+    // 学习工作区（Vault）授权目录：绝对路径或 null（未绑定）
+    vaultPath:
+      typeof raw.vaultPath === 'string' && raw.vaultPath.trim() ? raw.vaultPath.trim() : null,
+  };
 }
 
 /* ------------------------------------------------------------------ *

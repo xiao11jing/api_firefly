@@ -33,7 +33,8 @@
         "@tauri-apps/api/core": "./js/vendor/tauri/api/core.js",
         "@tauri-apps/api/path": "./js/vendor/tauri/api/path.js",
         "@tauri-apps/plugin-fs": "./js/vendor/tauri/plugin-fs/index.js",
-        "@tauri-apps/plugin-http": "./js/vendor/tauri/plugin-http/index.js"
+        "@tauri-apps/plugin-http": "./js/vendor/tauri/plugin-http/index.js",
+        "@tauri-apps/plugin-dialog": "./js/vendor/tauri/plugin-dialog/index.js"
       }
     }
   </script>
@@ -466,6 +467,14 @@
                 <button type="button" class="ghost-btn" id="btn-lf-add-item">添加</button>
               </div>
             </div>
+            <div class="learn-plan-box" id="vault-box">
+              <h4 class="learn-plan-title">学习工作区（文件夹授权） <span class="learn-plan-sub" id="vault-sub">未绑定</span></h4>
+              <p class="form-hint" id="vault-hint">绑定后 AI 可读取该文件夹内的资料，并在你逐次确认下写入 notes/、exercises/、learn/ 三个产出目录；原始资料保持只读。</p>
+              <div class="learn-plan-add">
+                <button type="button" class="ghost-btn" id="btn-vault-pick">选择文件夹…</button>
+                <button type="button" class="ghost-btn hidden" id="btn-vault-unbind">解绑</button>
+              </div>
+            </div>
           </section>
 
           <section class="settings-panel hidden" id="panel-pet" role="tabpanel" aria-labelledby="tab-pet">
@@ -529,7 +538,7 @@
             </div>
             <input type="file" id="avatar-input" accept="image/*" hidden>
             <p class="form-hint">
-              头像会等比压缩到 256px 以内再保存（大图也不会撑爆本地存储）。名称留空即用默认：用户「你」、AI「AI」。
+              头像会等比压缩到 256px 以内再保存（大图也不会撑爆本地存储）。名称留空即用默认：用户「你」、AI「Firefly」。
             </p>
           </section>
         </div>
@@ -538,6 +547,24 @@
   </div>
 
   <div class="toast hidden" id="toast" role="status"></div>
+
+  <!-- AI 写入工作区文件的逐次确认弹窗（learn_project.md §2 决策 8） -->
+  <div class="modal-mask hidden" id="vault-write-mask" role="dialog" aria-modal="true" aria-labelledby="vw-title">
+    <div class="modal vw-modal">
+      <div class="modal-head"><h2 id="vw-title">AI 请求写入文件</h2></div>
+      <p class="form-hint" id="vw-note">每次写入都需要你单独确认；文件将写入已授权工作区的产出目录。</p>
+      <div class="vw-meta">
+        <span class="vw-path" id="vw-path"></span>
+        <span class="vw-warn hidden" id="vw-hashwarn"></span>
+      </div>
+      <pre class="vw-content" id="vw-content"></pre>
+      <div class="form-actions">
+        <button type="button" class="primary-btn" id="btn-vw-approve">允许写入</button>
+        <button type="button" class="ghost-btn" id="btn-vw-reject">拒绝</button>
+      </div>
+    </div>
+  </div>
+
   <input type="file" id="file-input" multiple accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,application/pdf,text/plain,text/markdown,text/csv,text/html,text/css,application/json,application/xml,application/vnd.openxmlformats-officedocument.wordprocessingml.document,.txt,.md,.markdown,.json,.csv,.tsv,.log,.yml,.yaml,.xml,.html,.css,.js,.mjs,.ts,.py,.java,.go,.rs,.c,.h,.cpp,.cs,.sh,.ps1,.sql,.ini,.toml,.docx" hidden>
 
   <script src="js/vendor/highlight.min.js"></script>

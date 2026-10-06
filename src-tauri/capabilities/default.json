@@ -17,6 +17,10 @@
       "identifier": "http:default",
       "description": "AI 请求经 Rust 侧本地代理发出（UrlPattern：任意 http/https 主机与路径）",
       "allow": [{ "url": "http://*" }, { "url": "https://*" }]
+    },
+    {
+      "identifier": "dialog:default",
+      "description": "学习工作区目录选择等系统对话框"
     }
   ]
 }

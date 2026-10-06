@@ -61,6 +61,14 @@ import {
   findMaterials,
 } from './learn/learn-materials.js';
 import {
+  createConfirmQueue,
+  formatVaultTree,
+  isWritablePath,
+  parseFileBlock,
+  parseVaultReadBlock,
+  sha256Hex,
+} from './learn/vault.js';
+import {
   advancePlan,
   applyProfile,
   applyReview,
@@ -120,6 +128,11 @@ const learnStore = createLearnStore(
 );
 let learnState = null;
 let editingLearnTopicId = null;
+// T6：学习工作区（Vault）目录树缓存 + AI 写入逐次确认队列
+let vaultTreeCache = '';
+const vaultQueue = createConfirmQueue();
+let vaultPumping = false;
+let vaultFsPromise = null;
 
 // ---------- 基础工具 ----------
 
@@ -969,7 +982,14 @@ function buildApiMessages(session, target, comparing) {
   // 仅 Learn 模式（顶栏切到 Learn 且有关联主题）才注入 Learn 分层提示词
   const learnTopic = sessionTopic(session);
   const learnOn = learnTopic && session.uiMode === 'learn';
-  const systemContent = assembleLearnSystem({ topic: learnOn ? learnTopic : null, userText: systemPrompt });
+  const systemContent = assembleLearnSystem({
+    topic: learnOn ? learnTopic : null,
+    userText: systemPrompt,
+    vault:
+      learnOn && learnState && learnState.vaultPath
+        ? { path: learnState.vaultPath, tree: vaultTreeCache }
+        : null,
+  });
   return systemContent ? [{ role: 'system', content: systemContent }, ...history] : history;
 }
 
@@ -1187,6 +1207,7 @@ async function persistLearn() {
     await learnStore.saveState({
       topics: learnState.topics,
       activeTopicId: learnState.activeTopicId,
+      vaultPath: learnState.vaultPath,
     });
   } catch (e) {
     toast(`学习数据保存失败：${(e && e.message) || e}`, 'error');
@@ -1887,6 +1908,18 @@ async function applyLearnBlocks(session, topic, full) {
     toast(`复盘已保存「${review.title}」${bits.length ? '，' + bits.join('，') : ''}`);
   }
 
+  // T6：工作区（Vault）读取 / 写入提议——绑定后才处理（解析失败静默忽略）
+  if (learnState && learnState.vaultPath) {
+    const readPath = parseVaultReadBlock(full);
+    if (readPath) await insertVaultFile(readPath);
+    const writeReq = parseFileBlock(full);
+    if (writeReq) {
+      vaultQueue.push(writeReq);
+      toast('AI 请求写入文件，等待你的确认');
+      pumpVaultWriteModal();
+    }
+  }
+
   if (dirty) await persistLearn();
 }
 
@@ -1908,6 +1941,225 @@ async function insertMaterial(material) {
   });
   renderAttachments();
   toast(`已插入「${material.name}」，随下一条消息发送`);
+}
+
+/* ---------------- T6：学习工作区（Vault）读写与逐次确认 ---------------- */
+
+const VAULT_TEXT_EXT = new Set([
+  'txt', 'md', 'markdown', 'json', 'csv', 'tsv', 'log', 'yml', 'yaml', 'xml',
+  'html', 'htm', 'css', 'js', 'mjs', 'ts', 'py', 'java', 'go', 'rs', 'c', 'h',
+  'cpp', 'cs', 'sh', 'ps1', 'sql', 'ini', 'toml',
+]);
+
+function vaultRoot() {
+  return String((learnState && learnState.vaultPath) || '').replace(/\/+$/, '');
+}
+
+function vaultAbs(relPath) {
+  return `${vaultRoot()}/${relPath}`;
+}
+
+/** plugin-fs 模块（动态加载，仅桌面绑定后用到） */
+function getVaultFs() {
+  if (!vaultFsPromise) vaultFsPromise = import('@tauri-apps/plugin-fs');
+  return vaultFsPromise;
+}
+
+/** AI 请求读取工作区文件 → 正文进附件栏，随用户下一条消息带回 */
+async function insertVaultFile(relPath) {
+  try {
+    if (isFull(attachments)) {
+      toast(`附件最多 ${MAX_ATTACHMENTS} 个`, 'error');
+      return;
+    }
+    const ext = (relPath.split('.').pop() || '').toLowerCase();
+    if (!VAULT_TEXT_EXT.has(ext)) {
+      toast(`暂只支持文本类文件读取（.${ext} 不支持）`, 'error');
+      return;
+    }
+    const fs = await getVaultFs();
+    const bytes = await fs.readFile(vaultAbs(relPath));
+    const text = new TextDecoder('utf-8').decode(bytes);
+    attachments.push({
+      id: nextAttachId(),
+      ...makeDocAttachment({
+        name: relPath.split('/').pop() || relPath,
+        text,
+        size: bytes.byteLength,
+      }),
+    });
+    renderAttachments();
+    toast(`已插入「${relPath}」，随下一条消息发送`);
+  } catch (e) {
+    console.error('读取工作区文件失败', e);
+    toast(`读取工作区文件失败：${(e && e.message) || e}`, 'error');
+  }
+}
+
+/** 执行已确认的写入：目录归属复核 → 建目录 → 覆盖写入 → 刷新目录树 */
+async function performVaultWrite(req) {
+  try {
+    if (!isWritablePath(req.path)) {
+      toast('已拒绝：目标不在可写产出目录', 'error');
+      return;
+    }
+    const fs = await getVaultFs();
+    const abs = vaultAbs(req.path);
+    const dir = abs.slice(0, abs.lastIndexOf('/'));
+    if (dir) await fs.mkdir(dir, { recursive: true });
+    await fs.writeTextFile(abs, req.content);
+    toast(`已写入 ${req.path}`);
+    refreshVaultTree();
+  } catch (e) {
+    console.error('写入工作区文件失败', e);
+    toast(`写入失败：${(e && e.message) || e}`, 'error');
+  }
+}
+
+let resolveVaultDecision = null;
+
+/** 展示确认弹窗并等待用户决定（true=允许）；含 baseHash 乐观锁提示 */
+async function showVaultWriteModal(req) {
+  $('#vw-path').textContent = `${vaultRoot()}/${req.path}`;
+  $('#vw-content').textContent = req.content;
+  const warn = $('#vw-hashwarn');
+  warn.classList.add('hidden');
+  if (req.baseHash) {
+    try {
+      const fs = await getVaultFs();
+      const bytes = await fs.readFile(vaultAbs(req.path));
+      const current = await sha256Hex(new TextDecoder('utf-8').decode(bytes));
+      if (current !== req.baseHash) {
+        warn.textContent = '文件在上次读取后已被外部修改，确认前请核对内容';
+        warn.classList.remove('hidden');
+      }
+    } catch {
+      /* 文件尚不存在：新建，无需警示 */
+    }
+  }
+  $('#vault-write-mask').classList.remove('hidden');
+  vaultModalOpen = true;
+  return new Promise((resolve) => {
+    resolveVaultDecision = resolve;
+  });
+}
+
+function closeVaultWriteModal(approved) {
+  $('#vault-write-mask').classList.add('hidden');
+  vaultModalOpen = false;
+  const r = resolveVaultDecision;
+  resolveVaultDecision = null;
+  if (r) r(approved);
+}
+
+let vaultModalOpen = false;
+
+/** 顺序消费写入队列：出队 → 弹窗逐次确认 → 落盘 → 下一个 */
+async function pumpVaultWriteModal() {
+  if (vaultPumping) return;
+  vaultPumping = true;
+  try {
+    for (;;) {
+      const req = await vaultQueue.take();
+      if (!learnState || !learnState.vaultPath) {
+        vaultQueue.settle(false); // 已解绑：丢弃
+        continue;
+      }
+      const approved = await showVaultWriteModal(req);
+      const { item } = vaultQueue.settle(approved);
+      if (!item) continue;
+      if (approved) await performVaultWrite(item);
+      else toast('已拒绝写入');
+    }
+  } catch (e) {
+    console.error('写入确认流程异常', e);
+  } finally {
+    vaultPumping = false;
+  }
+}
+
+/** 遍历工作区生成提示词目录树（深度 ≤2、条目有上限） */
+async function refreshVaultTree() {
+  vaultTreeCache = '';
+  if (!isDesktop() || !learnState || !learnState.vaultPath) return;
+  try {
+    const fs = await getVaultFs();
+    const root = vaultRoot();
+    const entries = [];
+    async function walk(rel, depth) {
+      if (depth > 2 || entries.length > 120) return;
+      let list = [];
+      try {
+        list = (await fs.readDir(rel ? `${root}/${rel}` : root)) || [];
+      } catch {
+        return;
+      }
+      for (const e of list) {
+        const name = e && (e.name || (e.path ? String(e.path).split(/[/\\]/).pop() : ''));
+        if (!name || name.startsWith('.')) continue;
+        const p = rel ? `${rel}/${name}` : name;
+        const isDir = !!(e && (e.isDirectory || e.isDir));
+        entries.push({ path: p, isDir });
+        if (isDir) await walk(p, depth + 1);
+      }
+    }
+    await walk('', 0);
+    vaultTreeCache = formatVaultTree(entries, { max: 80 });
+  } catch (e) {
+    console.error('刷新工作区目录失败', e);
+  }
+}
+
+/** 设置 → 学习：工作区绑定控件状态 */
+function renderVaultControls() {
+  const sub = $('#vault-sub');
+  if (!sub) return;
+  const path = (learnState && learnState.vaultPath) || '';
+  const canPick = isDesktop();
+  sub.textContent = path || '未绑定';
+  $('#btn-vault-pick').disabled = !canPick;
+  $('#btn-vault-unbind').classList.toggle('hidden', !path);
+  $('#vault-hint').textContent = canPick
+    ? '绑定后 AI 可读取该文件夹内的资料，并在你逐次确认下写入 notes/、exercises/、learn/ 三个产出目录；原始资料保持只读。'
+    : '网页版不可用：请使用桌面版（.deb）安装后绑定本地文件夹。';
+}
+
+/** 选择并授权工作区目录（系统对话框 → 动态加入 fs scope → 持久化） */
+async function bindVaultFolder() {
+  if (!isDesktop()) {
+    toast('工作区绑定仅桌面版可用', 'error');
+    return;
+  }
+  try {
+    const { open: dialogOpen } = await import('@tauri-apps/plugin-dialog');
+    const picked = await dialogOpen({
+      directory: true,
+      multiple: false,
+      title: '选择学习工作区文件夹',
+    });
+    const path = Array.isArray(picked) ? picked[0] : picked;
+    if (!path) return;
+    const { invoke } = await import('@tauri-apps/api/core');
+    await invoke('allow_vault_dir', { path: String(path) });
+    learnState.vaultPath = String(path);
+    await persistLearn();
+    await refreshVaultTree();
+    renderVaultControls();
+    toast('已绑定学习工作区');
+  } catch (e) {
+    console.error('绑定工作区失败', e);
+    toast(`绑定失败：${(e && e.message) || e}`, 'error');
+  }
+}
+
+/** 解绑工作区（数据不动，仅解除授权与关联） */
+async function unbindVaultFolder() {
+  if (!learnState) return;
+  learnState.vaultPath = null;
+  vaultTreeCache = '';
+  await persistLearn();
+  renderVaultControls();
+  toast('已解绑学习工作区');
 }
 
 /** 从资料库移除（正文与条目一并删除） */
@@ -2914,6 +3166,7 @@ function openSettings(panel = 'appearance') {
   renderProviderList();
   renderTemplateList();
   renderLearnSettings();
+  renderVaultControls();
   switchSettingsPanel(panel);
   $('#settings-mask').classList.remove('hidden');
 }
@@ -3137,6 +3390,10 @@ function bind() {
   $('#learn-form').addEventListener('submit', saveLearnForm);
   $('#btn-del-topic').addEventListener('click', deleteLearnTopic);
   $('#btn-lf-add-item').addEventListener('click', addLearnItem);
+  $('#btn-vault-pick').addEventListener('click', bindVaultFolder);
+  $('#btn-vault-unbind').addEventListener('click', unbindVaultFolder);
+  $('#btn-vw-approve').addEventListener('click', () => closeVaultWriteModal(true));
+  $('#btn-vw-reject').addEventListener('click', () => closeVaultWriteModal(false));
   $('#btn-learn-topic').addEventListener('click', () => openSettings('learn'));
   $('#btn-learn-attach').addEventListener('click', () => {
     const id = $('#lf-id').value;
@@ -3482,6 +3739,16 @@ async function init() {
   const active = store.getActiveSession(state);
   if (!active || active.messages.length) store.createSession(state, state.selectedModel);
   learnState = await learnStore.loadState();
+  // 启动时恢复工作区授权（fs scope 是运行时状态，每次启动都要重新加入）
+  if (learnState && learnState.vaultPath && isDesktop()) {
+    try {
+      const { invoke } = await import('@tauri-apps/api/core');
+      await invoke('allow_vault_dir', { path: learnState.vaultPath });
+      await refreshVaultTree();
+    } catch (e) {
+      console.error('恢复工作区授权失败', e);
+    }
+  }
   applyTheme(state.settings && state.settings.theme);
   applyBackground();
   bind();

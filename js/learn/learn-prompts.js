@@ -25,7 +25,8 @@ export const LEARN_SYSTEM = [
   '- notes/ — 学习笔记与概念整理。',
   '- exercises/ — 练习、测验、复盘。',
   '- learn/ — 学习计划与进度（learn/plan.md、learn/progress.md），由应用维护并在面板展示。',
-  '你不能直接写文件，也不得声称已经写入。需要产出笔记、练习或复盘时，在对话中用清晰的分节输出，由用户或应用归档到对应目录。',
+  '没有绑定工作区文件夹时，你不能直接写文件，也不得声称已经写入；需要产出笔记、练习或复盘时，在对话中用清晰的分节输出。',
+  '绑定工作区文件夹后（上下文会给出路径与目录树），也只能通过下述结构化块提议读写；文件是否真正写入以用户逐次确认为准。',
   '',
   '## 交流原则',
   '- 先给直觉，再给细节；复杂概念分层递进。',
@@ -59,6 +60,18 @@ export const LEARN_SYSTEM = [
   '```',
   'body 写本轮要点、已掌握与待加强、遗留问题与下一步；advance 为 true 表示计划可推进一格；',
   'resolved 填本轮已解决的待解决问题原文（须与进度面板里的文本完全一致，没有则留空）。',
+  '- 读取工作区文件：输出 vault-read 块；应用会把文件放进附件栏，随用户下一条消息带回给你：',
+  '```vault-read',
+  '{"path": "materials/课件.md"}',
+  '```',
+  '- 写入工作区文件：仅允许 notes/、exercises/、learn/ 三个产出目录，输出 file 块给出完整文件内容；',
+  '应用会弹窗请用户逐次确认，确认后才落盘：',
+  '```file',
+  '{"path": "notes/主题总结.md", "content": "……完整文件内容……"}',
+  '```',
+  '- 修改已有文件先 vault-read 读到最新内容再整体重写；可带 baseHash（上次读取内容的 sha256- 摘要）让应用检测外部修改。',
+  '- materials/ 等只读资料绝不请求写入；路径一律为工作区内的相对路径，不使用 .. 、绝对路径或保留目录。',
+  '- 用户拒绝写入时接受结果，换一种组织方式或直接在对话中给出内容，不要原样重复请求。',
 ].join('\n');
 
 /** 教学人格：分场景表达与语气 */
@@ -115,9 +128,11 @@ export const MODE_COMPANION = [
 ].join('\n');
 
 /**
- * 动态主题上下文：主题信息、访谈指示、计划状态、待解决问题、资料清单。
+ * 动态主题上下文：主题信息、访谈指示、计划状态、待解决问题、资料清单、工作区（可选）。
+ * @param {object} topic
+ * @param {{path: string, tree?: string}|null} [vault] 已授权的工作区文件夹
  */
-export function buildTopicContext(topic) {
+export function buildTopicContext(topic, vault = null) {
   if (!topic) return '';
   const lines = ['## 当前学习上下文'];
   const modeLabel = topic.mode === 'plan' ? '计划驱动' : '陪伴';
@@ -160,19 +175,28 @@ export function buildTopicContext(topic) {
     if (topic.materials.length > 8) lines.push(`- ……另有 ${topic.materials.length - 8} 份`);
   }
 
+  if (vault && vault.path) {
+    lines.push('', '### 工作区文件夹（用户已授权）');
+    lines.push(`- 路径：${vault.path}`);
+    if (vault.tree && String(vault.tree).trim()) {
+      lines.push('- 目录树：', String(vault.tree));
+    }
+    lines.push('- 读文件用 vault-read 块，写文件用 file 块（仅产出目录，且须用户逐次确认）。');
+  }
+
   return lines.join('\n');
 }
 
 /**
  * 装配完整 system 正文。
- * @param {{topic: object|null, userText?: string}} params
+ * @param {{topic: object|null, userText?: string, vault?: {path: string, tree?: string}|null}} params
  * @returns {string} 无主题时原样返回 userText
  */
-export function assembleLearnSystem({ topic, userText = '' } = {}) {
+export function assembleLearnSystem({ topic, userText = '', vault = null } = {}) {
   const user = String(userText || '').trim();
   if (!topic) return user;
   const mode = topic.mode === 'plan' ? MODE_PLAN : MODE_COMPANION;
-  const context = buildTopicContext(topic);
+  const context = buildTopicContext(topic, vault);
   return [LEARN_SYSTEM, LEARN_IDENTITY, mode, context, user]
     .filter((part) => part && part.trim())
     .join('\n\n');

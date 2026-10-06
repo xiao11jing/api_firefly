@@ -15,6 +15,7 @@
   "devDependencies": {
     "@tauri-apps/api": "^2.12.1",
     "@tauri-apps/cli": "^2.0.0",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
     "@tauri-apps/plugin-fs": "^2.6.0",
     "@tauri-apps/plugin-http": "^2.8.0",
     "mammoth": "^1.13.0",

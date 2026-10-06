@@ -148,3 +148,31 @@ test('createTopic 默认陪伴模式，上下文标注模式', () => {
   const ctx = buildTopicContext(topic);
   assert.ok(ctx.includes('主题：测试主题（模式：陪伴）'));
 });
+
+test('常驻规则包含工作区读写与逐次确认约定', () => {
+  assert.ok(LEARN_SYSTEM.includes('vault-read'));
+  assert.ok(LEARN_SYSTEM.includes('```file'));
+  assert.ok(LEARN_SYSTEM.includes('逐次确认'));
+  assert.ok(LEARN_SYSTEM.includes('notes/、exercises/、learn/'));
+  assert.ok(LEARN_SYSTEM.includes('baseHash'));
+  assert.ok(LEARN_SYSTEM.includes('不要原样重复请求'), '拒绝后不得重复请求');
+});
+
+test('上下文注入工作区路径与目录树（未绑定不注入）', () => {
+  const topic = planTopic();
+  const without = buildTopicContext(topic);
+  assert.ok(!without.includes('工作区文件夹（用户已授权）'));
+  const withVault = buildTopicContext(topic, {
+    path: '/home/honor/vault',
+    tree: 'notes/\nmaterials/a.md',
+  });
+  assert.ok(withVault.includes('路径：/home/honor/vault'));
+  assert.ok(withVault.includes('materials/a.md'));
+  assert.ok(withVault.includes('vault-read 块'));
+});
+
+test('assembleLearnSystem 透传工作区上下文', () => {
+  const sys = assembleLearnSystem({ topic: planTopic(), vault: { path: '/data/v' } });
+  assert.ok(sys.includes('/data/v'));
+  assert.ok(!assembleLearnSystem({ topic: planTopic() }).includes('路径：/data'));
+});

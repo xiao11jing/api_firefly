@@ -1290,6 +1290,12 @@ try {
   await page.click('#tab-learn');
   check('设置出现学习面板', await page.locator('#panel-learn').isVisible());
   check('计划区在未选主题时隐藏', await page.locator('#learn-plan-box').isHidden());
+  check('工作区绑定区块可见', await page.locator('#vault-box').isVisible());
+  check('网页版工作区绑定按钮为禁用态', await page.locator('#btn-vault-pick').isDisabled());
+  check(
+    '网页版工作区提示引导去桌面版',
+    (await page.locator('#vault-hint').textContent()).includes('桌面版')
+  );
   await page.fill('#lf-name', 'Transformer 学习');
   await page.selectOption('#lf-mode', 'plan');
   await page.click('#learn-form button[type="submit"]');

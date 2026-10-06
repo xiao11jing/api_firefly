@@ -13,6 +13,7 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 tauri-plugin-fs = "2"
 tauri-plugin-http = "2"
+tauri-plugin-dialog = "2"
 
 [profile.release]
 codegen-units = 1

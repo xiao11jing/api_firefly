@@ -2334,3 +2334,10 @@ html.is-welcome .messages {
   font-size: 11.5px;
   color: var(--faint);
 }
+
+/* ---------- 学习工作区：写入确认弹窗 ---------- */
+.vw-modal { width: min(720px, 94vw); max-height: 86vh; display: flex; flex-direction: column; }
+.vw-meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin: 10px 0 8px; }
+.vw-path { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; color: var(--ink); word-break: break-all; }
+.vw-warn { font-size: 12px; color: var(--danger); background: var(--danger-soft); border: 1px solid var(--danger-border-soft); border-radius: 8px; padding: 2px 8px; }
+.vw-content { flex: 1 1 auto; min-height: 120px; max-height: 48vh; overflow: auto; margin: 0 0 12px; padding: 12px; background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; font-size: 12.5px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; }

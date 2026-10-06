@@ -129,6 +129,7 @@
 localStorage["ai-multi-chat-learn-v1"] = {
   schemaVersion: 1,
   activeTopicId: "t_xxx",
+  vaultPath: null,                        // 学习工作区授权目录（绝对路径，桌面版）
   topics: [{
     id, name,
     mode: "plan" | "companion",
@@ -319,7 +320,14 @@ mode_companion.md  模式二策略：跟随用户计划、不主导、克制纠�
 > attachments/learn-materials 断言更新；E2E 新增 9e（HTML/Word 字数、可见正文、去脚本样式、
 > Word 中英文正文、未关联会话不归档），**单测 288、E2E 312 全绿**。
 
-### Phase 6 — 文件夹绑定（并入桌面版 / Tauri `.deb` 交付）⏳ 进行中
+### Phase 6 — 文件夹绑定（并入桌面版 / Tauri `.deb` 交付）✅ 已完成
+
+> 交付：`js/learn/vault.js`（路径安全归一化、```file / ```vault-read 块解析、sha256 contentHash、
+> 写入逐次确认队列、目录树格式化）；设置「学习」页工作区绑定（dialog 选目录 + `allow_vault_dir`
+> 运行时 fs scope 动态授权，仅绝对路径）；AI 读文件 → 附件栏随消息带回；AI 写文件 → 弹窗逐次
+> 确认 → 仅 notes/ exercises/ learn/ 落盘（baseHash 乐观锁警示外部修改）；LEARN_SYSTEM 增补读写
+> 约定，主题上下文注入工作区路径与目录树；启动时自动恢复授权。测试：`tests/vault.test.mjs` +
+> learn-prompts/vault 断言扩展 + tauri 结构断言，E2E 新增工作区区块检查。
 
 1. `FolderStore` 实现：Tauri FS 为主（网页 Chromium 的 File System Access API 留作备选）
 2. contentHash 乐观锁、目录路径限制、`.obsidian/` 等保留目录不写

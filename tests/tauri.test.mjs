@@ -115,6 +115,29 @@ test('本地请求通道：plugin-http 注册、URL scope 与 vendor', () => {
   assert.ok(main.includes('setFetch('));
 });
 
+test('工作区授权：dialog 插件 + allow_vault_dir 运行时 scope', () => {
+  const cargo = read('src-tauri/Cargo.toml');
+  assert.match(cargo, /tauri-plugin-dialog = "2"/);
+  const main = read('src-tauri/main.rs');
+  assert.ok(main.includes('tauri_plugin_dialog::init()'), '注册 dialog 插件');
+  assert.ok(main.includes('fn allow_vault_dir'), '自定义运行时授权命令');
+  assert.ok(main.includes('allow_directory'), '调用 fs scope 动态授权');
+  assert.ok(main.includes('generate_handler![allow_vault_dir]'), '注册进 invoke_handler');
+  assert.ok(main.includes('is_absolute'), '拒绝非绝对路径');
+  const cap = JSON.parse(read('src-tauri/capabilities/default.json'));
+  assert.ok(
+    cap.permissions.some((p) => typeof p === 'object' && p.identifier === 'dialog:default'),
+    '缺少 dialog 权限'
+  );
+  const vendorPath = path.join(root, 'js/vendor/tauri/plugin-dialog/index.js');
+  assert.ok(existsSync(vendorPath) && statSync(vendorPath).size > 1000, '缺少 dialog vendor');
+  assert.ok(readFileSync(vendorPath, 'utf8').includes('plugin:dialog|open'));
+  assert.ok(read('index.html').includes('"@tauri-apps/plugin-dialog"'));
+  assert.ok(pkg.devDependencies['@tauri-apps/plugin-dialog']);
+  // 前端入口存在
+  assert.ok(existsSync(path.join(root, 'js/learn/vault.js')), '缺少 vault 纯逻辑模块');
+});
+
 test('vendor：官方 ESM 已拷贝且 import map 指向它们', () => {
   const files = [
     'js/vendor/tauri/api/core.js',
